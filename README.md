@@ -9,7 +9,7 @@ A CLI tool to assess PDF files in a folder, show page counts, and optionally str
 - 🗜️ Optimize PDF file sizes
 - 🔄 Option to replace original files
 - 🎨 Beautiful CLI interface with colors and tables
-- 🚀 Fast processing using pikepdf (based on qpdf)
+- 🚀 Fast processing using pypdf
 
 ## Installation
 
@@ -25,7 +25,7 @@ A CLI tool to assess PDF files in a folder, show page counts, and optionally str
 
 3. **Install dependencies**:
    ```bash
-   pip install pikepdf rich
+   pip install pypdf rich
    # Optional: pip install Pillow  # for advanced image optimization
    ```
 
@@ -124,7 +124,7 @@ Size reduction: 93.1%
 | File optimization | ✅ Advanced | ✅ Basic |
 | Beautiful tables | ✅ | ❌ |
 | Cross-platform | ✅ | ⚠️ Unix-like |
-| Dependencies | pikepdf, rich | qpdf/pdftk |
+| Dependencies | pypdf, rich | qpdf/pdftk |
 
 ## Advanced Usage
 
@@ -148,7 +148,7 @@ The tool can be combined with other PDF utilities:
 
 ### Common Issues
 
-1. **"pikepdf not found"**: Run `pip install pikepdf rich`
+1. **"pypdf not found"**: Run `pip install pypdf rich`
 2. **"qpdf not found"**: Install qpdf using your package manager
 3. **Permission denied**: Make script executable with `chmod +x`
 
