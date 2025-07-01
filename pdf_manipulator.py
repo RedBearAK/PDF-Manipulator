@@ -215,8 +215,8 @@ def optimize_pdf(pdf_path: Path) -> Tuple[Path, float]:
 
 
 def process_multipage_pdfs(pdf_files: List[Tuple[Path, int, float]], 
-                          operation: str,
-                          replace_original: bool = False):
+                            operation: str,
+                            replace_original: bool = False):
     """Process multi-page PDFs based on the chosen operation."""
     multi_page_pdfs = [(p, c, s) for p, c, s in pdf_files if c > 1]
 
@@ -313,25 +313,25 @@ Note: No short arguments are provided to ensure clarity and prevent accidents.
     # Operations
     operations = parser.add_argument_group('operations')
     operations.add_argument('--strip-first', action='store_true',
-                           help='Strip multi-page PDFs to first page only')
+                            help='Strip multi-page PDFs to first page only')
     operations.add_argument('--split-pages', action='store_true',
-                           help='Split multi-page PDFs into individual page files')
+                            help='Split multi-page PDFs into individual page files')
     operations.add_argument('--optimize', action='store_true',
-                           help='Optimize PDF file sizes')
+                            help='Optimize PDF file sizes')
     operations.add_argument('--analyze', action='store_true',
-                           help='Analyze PDFs to understand file sizes')
+                            help='Analyze PDFs to understand file sizes')
     
     # Processing modes
     modes = parser.add_argument_group('processing modes')
     modes.add_argument('--interactive', action='store_true',
-                      help='Process PDFs interactively (default for operations)')
+                        help='Process PDFs interactively (default for operations)')
     modes.add_argument('--batch', action='store_true',
-                      help='Process all matching PDFs without individual prompts')
+                        help='Process all matching PDFs without individual prompts')
     
     # Safety options
     safety = parser.add_argument_group('safety options')
     safety.add_argument('--replace', action='store_true',
-                       help='Replace original files after processing (CAREFUL!)')
+                        help='Replace original files after processing (CAREFUL!)')
 
     args = parser.parse_args()
 
