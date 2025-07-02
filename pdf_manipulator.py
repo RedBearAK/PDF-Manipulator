@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-__version__ = "20250701"
+__version__ = "20250702"
 
 """
 PDF Manipulator - A CLI tool to assess PDFs and manipulate pages
@@ -16,7 +16,7 @@ import os
 import sys
 import argparse
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Union
 from pypdf import PdfReader, PdfWriter
 from rich.console import Console
 from rich.table import Table
@@ -52,6 +52,22 @@ def scan_folder(folder_path: Path) -> List[Tuple[Path, int, float]]:
             pdf_files.append((pdf_path, page_count, file_size))
 
     return sorted(pdf_files, key=lambda x: x[0].name)
+
+
+def scan_file(file_path: Path) -> List[Tuple[Path, int, float]]:
+    """Get info for a single PDF file."""
+    if not file_path.exists():
+        console.print(f"[red]Error: File {file_path} does not exist[/red]")
+        return []
+    
+    if not file_path.suffix.lower() == '.pdf':
+        console.print(f"[red]Error: {file_path} is not a PDF file[/red]")
+        return []
+    
+    page_count, file_size = get_pdf_info(file_path)
+    if page_count > 0:
+        return [(file_path, page_count, file_size)]
+    return []
 
 
 def analyze_pdf(pdf_path: Path) -> None:
@@ -93,9 +109,9 @@ def analyze_pdf(pdf_path: Path) -> None:
         console.print(f"[red]Error analyzing {pdf_path.name}: {e}[/red]")
 
 
-def display_pdf_table(pdf_files: List[Tuple[Path, int, float]]):
+def display_pdf_table(pdf_files: List[Tuple[Path, int, float]], title: str = "PDF Files Assessment"):
     """Display PDF files in a formatted table."""
-    table = Table(title="PDF Files Assessment")
+    table = Table(title=title)
     table.add_column("File", style="cyan", no_wrap=True)
     table.add_column("Pages", justify="right", style="magenta")
     table.add_column("Size (MB)", justify="right", style="green")
@@ -268,6 +284,52 @@ def process_multipage_pdfs(pdf_files: List[Tuple[Path, int, float]],
                     console.print("[green]✓ Original file deleted[/green]")
 
 
+def process_single_pdf(pdf_path: Path, page_count: int, file_size: float,
+                       args: argparse.Namespace):
+    """Process a single PDF file based on the specified operation."""
+    if args.analyze:
+        analyze_pdf(pdf_path)
+        
+    elif args.optimize:
+        if args.batch or Confirm.ask(f"Optimize {pdf_path.name}?", default=True):
+            output_path, new_size = optimize_pdf(pdf_path)
+            if output_path:
+                console.print(f"[green]✓ Optimized:[/green] {output_path.name} "
+                            f"({file_size:.2f} MB → {new_size:.2f} MB)")
+                if args.replace and Confirm.ask("Replace original file?", default=False):
+                    pdf_path.unlink()
+                    output_path.rename(pdf_path)
+                    console.print("[green]✓ Original file replaced[/green]")
+                    
+    elif args.strip_first:
+        if page_count == 1:
+            console.print("[yellow]PDF already has only one page[/yellow]")
+        else:
+            if args.batch or Confirm.ask("Strip to first page only?", default=False):
+                output_path, new_size = strip_to_first_page(pdf_path)
+                if output_path:
+                    console.print(f"[green]✓ Created:[/green] {output_path.name} ({new_size:.2f} MB)")
+                    console.print(f"[dim]Size reduction: {((file_size - new_size) / file_size * 100):.1f}%[/dim]")
+                    if args.replace and Confirm.ask("Replace original file?", default=False):
+                        pdf_path.unlink()
+                        output_path.rename(pdf_path)
+                        console.print("[green]✓ Original file replaced[/green]")
+                        
+    elif args.split_pages:
+        if page_count == 1:
+            console.print("[yellow]PDF already has only one page[/yellow]")
+        else:
+            if args.batch or Confirm.ask(f"Split into {page_count} separate files?", default=False):
+                output_files = split_to_pages(pdf_path)
+                if output_files:
+                    console.print(f"[green]✓ Split into {len(output_files)} files:[/green]")
+                    for out_path, out_size in output_files:
+                        console.print(f"  - {out_path.name} ({out_size:.2f} MB)")
+                    if args.replace and Confirm.ask("Delete original file?", default=False):
+                        pdf_path.unlink()
+                        console.print("[green]✓ Original file deleted[/green]")
+
+
 def main():
     """
     Main entry point for the PDF Manipulator.
@@ -291,13 +353,16 @@ Modes:
     --batch           Process all matching PDFs without prompting
 
 Examples:
-    %(prog)s                           # Just scan and assess
-    %(prog)s --analyze                 # Analyze large PDFs
-    %(prog)s --optimize                # Optimize all PDFs
+    %(prog)s                           # Scan current directory
+    %(prog)s /path/to/folder           # Scan specific folder
+    %(prog)s file.pdf                  # Process single file
+    %(prog)s --version                 # Show version information
+    %(prog)s file.pdf --analyze        # Analyze single PDF
+    %(prog)s file.pdf --optimize       # Optimize single PDF
     %(prog)s --strip-first             # Interactive: ask which PDFs to strip
     %(prog)s --split-pages             # Interactive: ask which PDFs to split
     %(prog)s --strip-first --batch     # Strip ALL multi-page PDFs (careful!)
-    %(prog)s --split-pages --batch     # Split ALL multi-page PDFs (careful!)
+    %(prog)s file.pdf --split-pages    # Split single PDF into pages
 
 Safety options:
     --replace         Replace/delete originals after processing (still asks!)
@@ -307,8 +372,12 @@ Note: No short arguments are provided to ensure clarity and prevent accidents.
         """
     )
 
-    parser.add_argument('folder', type=Path, default=Path('.'), nargs='?',
-                        help='Folder containing PDF files (default: current directory)')
+    parser.add_argument('path', type=Path, default=Path('.'), nargs='?',
+                        help='PDF file or folder containing PDF files (default: current directory)')
+    
+    # Version
+    parser.add_argument('--version', action='version', version=f'%(prog)s {__version__}',
+                        help='Show program version and exit')
     
     # Operations
     operations = parser.add_argument_group('operations')
@@ -345,93 +414,124 @@ Note: No short arguments are provided to ensure clarity and prevent accidents.
         console.print("[red]Error: Please specify only one operation at a time[/red]")
         sys.exit(1)
 
-    if not args.folder.exists() or not args.folder.is_dir():
-        console.print(f"[red]Error: {args.folder} is not a valid directory[/red]")
+    # Determine if path is file or folder
+    is_file = args.path.is_file()
+    is_folder = args.path.is_dir()
+    
+    if not is_file and not is_folder:
+        console.print(f"[red]Error: {args.path} is not a valid file or directory[/red]")
         sys.exit(1)
 
-    # Scan folder
-    console.print(f"[blue]Scanning {args.folder.absolute()}...[/blue]\n")
-    pdf_files = scan_folder(args.folder)
-
-    if not pdf_files:
-        console.print("[yellow]No PDF files found![/yellow]")
-        sys.exit(0)
-
-    # Display assessment
-    display_pdf_table(pdf_files)
-
-    # Handle operations
-    if args.analyze:
-        console.print("\n[blue]Analysis mode[/blue]")
-        # Analyze large PDFs (> 1MB or > 0.5MB per page)
-        for pdf_path, page_count, file_size in pdf_files:
-            size_per_page = file_size / page_count if page_count > 0 else 0
-            if file_size > 1.0 or size_per_page > 0.5:
-                analyze_pdf(pdf_path)
-                
-    elif args.optimize:
-        console.print("\n[blue]Optimization mode[/blue]")
-        for pdf_path, _, file_size in pdf_files:
-            if args.batch or Confirm.ask(f"Optimize {pdf_path.name}?", default=True):
-                output_path, new_size = optimize_pdf(pdf_path)
-                if output_path:
-                    console.print(f"[green]✓ Optimized:[/green] {output_path.name} "
-                                f"({file_size:.2f} MB → {new_size:.2f} MB)")
-                    
-    elif args.strip_first or args.split_pages:
-        # Determine operation
-        if args.strip_first:
-            operation = "strip"
-            console.print("\n[blue]Strip to first page mode[/blue]")
-        else:
-            operation = "split"
-            console.print("\n[blue]Split pages mode[/blue]")
+    # Process based on input type
+    if is_file:
+        # Single file mode
+        console.print(f"[blue]Processing file: {args.path.absolute()}[/blue]\n")
+        pdf_files = scan_file(args.path)
         
-        # Extra warning for batch mode with replace
-        if args.batch and args.replace:
-            console.print(f"[red]WARNING: This will {operation} ALL multi-page PDFs and replace originals![/red]")
-            if not Confirm.ask("Are you absolutely sure?", default=False):
-                console.print("[yellow]Operation cancelled[/yellow]")
-                return
-        
-        # Process based on mode
-        if args.batch:
-            multi_page_pdfs = [(p, c, s) for p, c, s in pdf_files if c > 1]
-            for pdf_path, page_count, file_size in multi_page_pdfs:
-                console.print(f"\n[cyan]Processing {pdf_path.name}[/cyan]...")
-                
-                if operation == "strip":
-                    output_path, new_size = strip_to_first_page(pdf_path)
-                    if output_path:
-                        console.print(f"[green]✓ Created:[/green] {output_path.name}")
-                        if args.replace:
-                            pdf_path.unlink()
-                            output_path.rename(pdf_path)
-                            console.print("[yellow]✓ Replaced original[/yellow]")
-                            
-                elif operation == "split":
-                    output_files = split_to_pages(pdf_path)
-                    if output_files:
-                        console.print(f"[green]✓ Split into {len(output_files)} files[/green]")
-                        if args.replace:
-                            pdf_path.unlink()
-                            console.print("[yellow]✓ Deleted original[/yellow]")
-        else:
-            # Interactive mode (default)
-            process_multipage_pdfs(pdf_files, operation, args.replace)
+        if not pdf_files:
+            console.print("[red]Failed to read PDF file[/red]")
+            sys.exit(1)
             
+        # Display file info
+        display_pdf_table(pdf_files, title="PDF File Assessment")
+        
+        # Process the single file if an operation was specified
+        if any([args.strip_first, args.split_pages, args.optimize, args.analyze]):
+            pdf_path, page_count, file_size = pdf_files[0]
+            process_single_pdf(pdf_path, page_count, file_size, args)
+        else:
+            # No operation specified - just show info
+            if pdf_files[0][1] > 1:
+                console.print(f"\n[yellow]This PDF has {pdf_files[0][1]} pages.[/yellow]")
+                console.print("\nAvailable operations:")
+                console.print("  --strip-first  Strip to first page only")
+                console.print("  --split-pages  Split into individual pages")
+                console.print("  --optimize     Optimize file size")
+                console.print("  --analyze      Analyze PDF contents")
     else:
-        # No operation specified - just show assessment
-        multi_page_count = sum(1 for _, pages, _ in pdf_files if pages > 1)
-        if multi_page_count > 0:
-            console.print(f"\n[yellow]Found {multi_page_count} multi-page PDF(s).[/yellow]")
-            console.print("\nAvailable operations:")
-            console.print("  --strip-first  Strip to first page only")
-            console.print("  --split-pages  Split into individual pages")
-            console.print("  --optimize     Optimize file sizes")
-            console.print("  --analyze      Analyze PDF contents")
-            console.print("\nAdd --batch to process all files without prompting")
-            console.print("Add --replace to overwrite originals (use with extreme caution!)")
+        # Folder mode (existing behavior)
+        console.print(f"[blue]Scanning {args.path.absolute()}...[/blue]\n")
+        pdf_files = scan_folder(args.path)
+
+        if not pdf_files:
+            console.print("[yellow]No PDF files found![/yellow]")
+            sys.exit(0)
+
+        # Display assessment
+        display_pdf_table(pdf_files)
+
+        # Handle operations
+        if args.analyze:
+            console.print("\n[blue]Analysis mode[/blue]")
+            # Analyze large PDFs (> 1MB or > 0.5MB per page)
+            for pdf_path, page_count, file_size in pdf_files:
+                size_per_page = file_size / page_count if page_count > 0 else 0
+                if file_size > 1.0 or size_per_page > 0.5:
+                    analyze_pdf(pdf_path)
+                    
+        elif args.optimize:
+            console.print("\n[blue]Optimization mode[/blue]")
+            for pdf_path, _, file_size in pdf_files:
+                if args.batch or Confirm.ask(f"Optimize {pdf_path.name}?", default=True):
+                    output_path, new_size = optimize_pdf(pdf_path)
+                    if output_path:
+                        console.print(f"[green]✓ Optimized:[/green] {output_path.name} "
+                                    f"({file_size:.2f} MB → {new_size:.2f} MB)")
+                        
+        elif args.strip_first or args.split_pages:
+            # Determine operation
+            if args.strip_first:
+                operation = "strip"
+                console.print("\n[blue]Strip to first page mode[/blue]")
+            else:
+                operation = "split"
+                console.print("\n[blue]Split pages mode[/blue]")
+            
+            # Extra warning for batch mode with replace
+            if args.batch and args.replace:
+                console.print(f"[red]WARNING: This will {operation} ALL multi-page PDFs and replace originals![/red]")
+                if not Confirm.ask("Are you absolutely sure?", default=False):
+                    console.print("[yellow]Operation cancelled[/yellow]")
+                    return
+            
+            # Process based on mode
+            if args.batch:
+                multi_page_pdfs = [(p, c, s) for p, c, s in pdf_files if c > 1]
+                for pdf_path, page_count, file_size in multi_page_pdfs:
+                    console.print(f"\n[cyan]Processing {pdf_path.name}[/cyan]...")
+                    
+                    if operation == "strip":
+                        output_path, new_size = strip_to_first_page(pdf_path)
+                        if output_path:
+                            console.print(f"[green]✓ Created:[/green] {output_path.name}")
+                            if args.replace:
+                                pdf_path.unlink()
+                                output_path.rename(pdf_path)
+                                console.print("[yellow]✓ Replaced original[/yellow]")
+                                
+                    elif operation == "split":
+                        output_files = split_to_pages(pdf_path)
+                        if output_files:
+                            console.print(f"[green]✓ Split into {len(output_files)} files[/green]")
+                            if args.replace:
+                                pdf_path.unlink()
+                                console.print("[yellow]✓ Deleted original[/yellow]")
+            else:
+                # Interactive mode (default)
+                process_multipage_pdfs(pdf_files, operation, args.replace)
+                
+        else:
+            # No operation specified - just show assessment
+            multi_page_count = sum(1 for _, pages, _ in pdf_files if pages > 1)
+            if multi_page_count > 0:
+                console.print(f"\n[yellow]Found {multi_page_count} multi-page PDF(s).[/yellow]")
+                console.print("\nAvailable operations:")
+                console.print("  --strip-first  Strip to first page only")
+                console.print("  --split-pages  Split into individual pages")
+                console.print("  --optimize     Optimize file sizes")
+                console.print("  --analyze      Analyze PDF contents")
+                console.print("\nAdd --batch to process all files without prompting")
+                console.print("Add --replace to overwrite originals (use with extreme caution!)")
 
 
 if __name__ == "__main__":
