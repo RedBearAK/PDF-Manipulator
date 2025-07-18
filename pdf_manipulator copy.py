@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-__version__ = "20250718"
+__version__ = "20250703"
 
 """
 PDF Manipulator - A CLI tool to assess PDFs and manipulate pages
@@ -154,7 +154,7 @@ def parse_page_range(range_str: str, total_pages: int) -> tuple[set[int], str]:
 
 
 def extract_pages(pdf_path: Path, page_range: str) -> tuple[Path, float]:
-    """Extract specified pages from PDF as a single document."""
+    """Extract specified pages from PDF."""
     try:
         reader = PdfReader(pdf_path)
         total_pages = len(reader.pages)
@@ -194,55 +194,6 @@ def extract_pages(pdf_path: Path, page_range: str) -> tuple[Path, float]:
     except Exception as e:
         console.print(f"[red]Error extracting pages from {pdf_path.name}: {e}[/red]")
         return None, 0
-
-
-def extract_pages_separate(pdf_path: Path, page_range: str) -> list[tuple[Path, float]]:
-    """Extract specified pages from PDF as separate documents."""
-    try:
-        reader = PdfReader(pdf_path)
-        total_pages = len(reader.pages)
-
-        # Parse the page range
-        pages_to_extract, range_desc = parse_page_range(page_range, total_pages)
-
-        # Sort pages for output
-        sorted_pages = sorted(pages_to_extract)
-        output_files = []
-
-        # Determine zero padding for filenames
-        padding = len(str(max(sorted_pages)))
-
-        for page_num in sorted_pages:
-            # Create filename for this page
-            page_str = str(page_num).zfill(padding)
-            output_path = pdf_path.parent / f"{pdf_path.stem}_page{page_str}.pdf"
-
-            # Create writer and add single page
-            writer = PdfWriter()
-            writer.add_page(reader.pages[page_num - 1])  # Convert to 0-indexed
-
-            # Copy metadata
-            if reader.metadata:
-                writer.add_metadata(reader.metadata)
-
-            # Write the output
-            with open(output_path, 'wb') as output_file:
-                writer.write(output_file)
-
-            # Get file size
-            file_size = output_path.stat().st_size / (1024 * 1024)
-            output_files.append((output_path, file_size))
-
-        console.print(f"[green]✓ Extracted {len(sorted_pages)} pages as separate files: {', '.join(map(str, sorted_pages))}[/green]")
-
-        return output_files
-
-    except ValueError as e:
-        console.print(f"[red]Error: {e}[/red]")
-        return []
-    except Exception as e:
-        console.print(f"[red]Error extracting pages from {pdf_path.name}: {e}[/red]")
-        return []
 
 
 def get_pdf_info(pdf_path: Path) -> tuple[int, float]:
@@ -450,34 +401,6 @@ def optimize_pdf(pdf_path: Path) -> tuple[Path, float]:
         return None, 0
 
 
-def decide_extraction_mode(pages_to_extract: set[int], page_range: str, interactive: bool = True) -> bool:
-    """
-    Decide whether to extract as separate files or single document.
-    Returns True for separate files, False for single document.
-    """
-    if not interactive:
-        return False  # Default to single document in batch mode
-    
-    num_pages = len(pages_to_extract)
-    
-    if num_pages == 1:
-        # Single page - no need to ask
-        return False
-    
-    # Multiple pages - ask user preference
-    console.print(f"\n[yellow]Extracting {num_pages} pages: {', '.join(map(str, sorted(pages_to_extract)))}[/yellow]")
-    console.print("How would you like to extract these pages?")
-    console.print("  1. As a single document (combine all pages)")
-    console.print("  2. As separate documents (one file per page)")
-    
-    while True:
-        choice = Prompt.ask("Choose option", choices=["1", "2"], default="1")
-        if choice == "1":
-            return False  # Single document
-        elif choice == "2":
-            return True   # Separate documents
-
-
 def process_multipage_pdfs(pdf_files: list[tuple[Path, int, float]], 
                             operation: str,
                             replace_original: bool = False):
@@ -531,37 +454,16 @@ def process_single_pdf(pdf_path: Path, page_count: int, file_size: float,
             if len(pages_to_extract) == page_count:
                 console.print("[yellow]Extracting all pages - consider using --optimize instead[/yellow]")
 
-            # Determine extraction mode
-            separate_files = args.separate_files
-            if not args.batch and not args.separate_files:
-                # Interactive mode and no explicit flag - ask user
-                separate_files = decide_extraction_mode(pages_to_extract, args.extract_pages, not args.batch)
-
             if args.batch or Confirm.ask(f"Extract pages {args.extract_pages} from {pdf_path.name}?", default=True):
-                if separate_files:
-                    # Extract as separate files
-                    output_files = extract_pages_separate(pdf_path, args.extract_pages)
-                    if output_files:
-                        total_size = sum(size for _, size in output_files)
-                        console.print(f"[green]✓ Created {len(output_files)} files:[/green]")
-                        for out_path, out_size in output_files:
-                            console.print(f"  - {out_path.name} ({out_size:.2f} MB)")
-                        if file_size > 0:
-                            console.print(f"[dim]Total size: {((total_size / file_size) * 100):.1f}% of original[/dim]")
-                        if args.replace and Confirm.ask("Replace original file?", default=False):
-                            pdf_path.unlink()
-                            console.print("[green]✓ Original file deleted[/green]")
-                else:
-                    # Extract as single document
-                    output_path, new_size = extract_pages(pdf_path, args.extract_pages)
-                    if output_path:
-                        console.print(f"[green]✓ Created:[/green] {output_path.name} ({new_size:.2f} MB)")
-                        if file_size > 0:
-                            console.print(f"[dim]Size: {((new_size / file_size) * 100):.1f}% of original[/dim]")
-                        if args.replace and Confirm.ask("Replace original file?", default=False):
-                            pdf_path.unlink()
-                            output_path.rename(pdf_path)
-                            console.print("[green]✓ Original file replaced[/green]")
+                output_path, new_size = extract_pages(pdf_path, args.extract_pages)
+                if output_path:
+                    console.print(f"[green]✓ Created:[/green] {output_path.name} ({new_size:.2f} MB)")
+                    if file_size > 0:
+                        console.print(f"[dim]Size: {((new_size / file_size) * 100):.1f}% of original[/dim]")
+                    if args.replace and Confirm.ask("Replace original file?", default=False):
+                        pdf_path.unlink()
+                        output_path.rename(pdf_path)
+                        console.print("[green]✓ Original file replaced[/green]")
         except ValueError as e:
             console.print(f"[red]Error: {e}[/red]")
 
@@ -611,11 +513,6 @@ Page Range Syntax for --extract-pages:
                         2::2      (even pages)
                         5:20:3    (every 3rd page from 5 to 20)
 
-Extraction Options:
-    --separate-files    Extract pages as separate documents (one file per page)
-                        Default: extract as single document combining all pages
-                        Interactive mode will ask unless this flag is specified
-
 Modes:
     --interactive       Process each PDF interactively (ask for each file)
     --batch             Process all matching PDFs without prompting
@@ -628,9 +525,8 @@ Examples:
     %(prog)s file.pdf --analyze        # Analyze single PDF
     %(prog)s file.pdf --optimize       # Optimize single PDF
     %(prog)s --strip-first             # Interactive: ask which PDFs to strip
-    %(prog)s --extract-pages=3-7       # Extract pages 3-7 as single document
-    %(prog)s --extract-pages=3-7 --separate-files  # Extract pages 3-7 as separate files
-    %(prog)s --extract-pages="1-3,7"   # Extract pages 1-3 and 7 (asks: single or separate)
+    %(prog)s --extract-pages=3-7       # Extract pages 3 through 7
+    %(prog)s --extract-pages="1-3,7"   # Extract pages 1-3 and page 7
     %(prog)s --extract-pages="last 2"  # Extract last 2 pages
     %(prog)s --extract-pages=::2       # Extract odd pages
     %(prog)s --split-pages             # Interactive: ask which PDFs to split
@@ -665,11 +561,6 @@ Note: No short arguments are provided to ensure clarity and prevent accidents.
     operations.add_argument('--analyze', action='store_true',
                             help='Analyze PDFs to understand file sizes')
 
-    # Extraction options
-    extraction = parser.add_argument_group('extraction options')
-    extraction.add_argument('--separate-files', action='store_true',
-                            help='Extract pages as separate documents (one file per page). Default: single document')
-
     # Processing modes
     modes = parser.add_argument_group('processing modes')
     modes.add_argument('--interactive', action='store_true',
@@ -694,11 +585,6 @@ Note: No short arguments are provided to ensure clarity and prevent accidents.
     # Validate arguments
     if args.batch and args.interactive:
         console.print("[red]Error: Cannot use both --batch and --interactive[/red]")
-        sys.exit(1)
-
-    # Validate --separate-files usage
-    if args.separate_files and not args.extract_pages:
-        console.print("[red]Error: --separate-files can only be used with --extract-pages[/red]")
         sys.exit(1)
 
     operations_count = sum([bool(args.extract_pages), args.split_pages, args.optimize, args.analyze])
@@ -736,12 +622,11 @@ Note: No short arguments are provided to ensure clarity and prevent accidents.
             if pdf_files[0][1] > 1:
                 console.print(f"\n[yellow]This PDF has {pdf_files[0][1]} pages.[/yellow]")
                 console.print("\nAvailable operations:")
-                console.print("  --strip-first      Strip to first page only")
-                console.print("  --extract-pages    Extract specific pages (e.g., \"3-7\", \"last 2\")")
-                console.print("  --separate-files   Use with --extract-pages to create separate files")
-                console.print("  --split-pages      Split into individual pages")
-                console.print("  --optimize         Optimize file size")
-                console.print("  --analyze          Analyze PDF contents")
+                console.print("  --strip-first   Strip to first page only")
+                console.print("  --extract-pages Extract specific pages (e.g., \"3-7\", \"last 2\")")
+                console.print("  --split-pages   Split into individual pages")
+                console.print("  --optimize      Optimize file size")
+                console.print("  --analyze       Analyze PDF contents")
     else:
         # Folder mode (existing behavior)
         console.print(f"[blue]Scanning {args.path.absolute()}...[/blue]\n")
@@ -777,10 +662,6 @@ Note: No short arguments are provided to ensure clarity and prevent accidents.
             if args.extract_pages:
                 operation = "extract"
                 console.print(f"\n[blue]Extract pages mode: {args.extract_pages}[/blue]")
-                if args.separate_files:
-                    console.print("[dim]Mode: Extract as separate files[/dim]")
-                else:
-                    console.print("[dim]Mode: Extract as single document (use --separate-files for separate files)[/dim]")
             else:
                 operation = "split"
                 console.print("\n[blue]Split pages mode[/blue]")
@@ -804,24 +685,13 @@ Note: No short arguments are provided to ensure clarity and prevent accidents.
                         try:
                             # Check if extraction is valid for this PDF
                             pages_to_extract, _ = parse_page_range(args.extract_pages, page_count)
-                            
-                            if args.separate_files:
-                                # Extract as separate files
-                                output_files = extract_pages_separate(pdf_path, args.extract_pages)
-                                if output_files:
-                                    console.print(f"[green]✓ Created {len(output_files)} separate files[/green]")
-                                    if args.replace:
-                                        pdf_path.unlink()
-                                        console.print("[yellow]✓ Deleted original[/yellow]")
-                            else:
-                                # Extract as single document
-                                output_path, new_size = extract_pages(pdf_path, args.extract_pages)
-                                if output_path:
-                                    console.print(f"[green]✓ Created:[/green] {output_path.name}")
-                                    if args.replace:
-                                        pdf_path.unlink()
-                                        output_path.rename(pdf_path)
-                                        console.print("[yellow]✓ Replaced original[/yellow]")
+                            output_path, new_size = extract_pages(pdf_path, args.extract_pages)
+                            if output_path:
+                                console.print(f"[green]✓ Created:[/green] {output_path.name}")
+                                if args.replace:
+                                    pdf_path.unlink()
+                                    output_path.rename(pdf_path)
+                                    console.print("[yellow]✓ Replaced original[/yellow]")
                         except ValueError as e:
                             console.print(f"[yellow]Skipping {pdf_path.name}: {e}[/yellow]")
                 else:
@@ -844,36 +714,14 @@ Note: No short arguments are provided to ensure clarity and prevent accidents.
                         try:
                             # Validate extraction for this PDF
                             pages_to_extract, _ = parse_page_range(args.extract_pages, page_count)
-                            
-                            # Determine extraction mode
-                            separate_files = args.separate_files
-                            if not args.separate_files:
-                                # Ask user preference
-                                separate_files = decide_extraction_mode(pages_to_extract, args.extract_pages, True)
-                            
                             if Confirm.ask(f"Extract pages {args.extract_pages}?", default=True):
-                                if separate_files:
-                                    # Extract as separate files
-                                    output_files = extract_pages_separate(pdf_path, args.extract_pages)
-                                    if output_files:
-                                        total_size = sum(size for _, size in output_files)
-                                        console.print(f"[green]✓ Created {len(output_files)} files:[/green]")
-                                        for out_path, out_size in output_files:
-                                            console.print(f"  - {out_path.name} ({out_size:.2f} MB)")
-                                        if args.replace and Confirm.ask("Delete original file?", default=False):
-                                            pdf_path.unlink()
-                                            console.print("[green]✓ Original file deleted[/green]")
-                                else:
-                                    # Extract as single document
-                                    output_path, new_size = extract_pages(pdf_path, args.extract_pages)
-                                    if output_path:
-                                        console.print(f"[green]✓ Created:[/green] {output_path.name} ({new_size:.2f} MB)")
-                                        if file_size > 0:
-                                            console.print(f"[dim]Size: {((new_size / file_size) * 100):.1f}% of original[/dim]")
-                                        if args.replace and Confirm.ask("Replace original file?", default=False):
-                                            pdf_path.unlink()
-                                            output_path.rename(pdf_path)
-                                            console.print("[green]✓ Original file replaced[/green]")
+                                output_path, new_size = extract_pages(pdf_path, args.extract_pages)
+                                if output_path:
+                                    console.print(f"[green]✓ Created:[/green] {output_path.name} ({new_size:.2f} MB)")
+                                    if args.replace and Confirm.ask("Replace original file?", default=False):
+                                        pdf_path.unlink()
+                                        output_path.rename(pdf_path)
+                                        console.print("[green]✓ Original file replaced[/green]")
                         except ValueError as e:
                             console.print(f"[yellow]Cannot extract from this PDF: {e}[/yellow]")
                 else:
@@ -886,12 +734,11 @@ Note: No short arguments are provided to ensure clarity and prevent accidents.
             if multi_page_count > 0:
                 console.print(f"\n[yellow]Found {multi_page_count} multi-page PDF(s).[/yellow]")
                 console.print("\nAvailable operations:")
-                console.print("  --strip-first      Strip to first page only")
-                console.print("  --extract-pages    Extract specific pages (e.g., \"3-7\", \"last 2\")")
-                console.print("  --separate-files   Use with --extract-pages to create separate files")
-                console.print("  --split-pages      Split into individual pages")
-                console.print("  --optimize         Optimize file sizes")
-                console.print("  --analyze          Analyze PDF contents")
+                console.print("  --strip-first   Strip to first page only")
+                console.print("  --extract-pages Extract specific pages (e.g., \"3-7\", \"last 2\")")
+                console.print("  --split-pages   Split into individual pages")
+                console.print("  --optimize      Optimize file sizes")
+                console.print("  --analyze       Analyze PDF contents")
                 console.print("\nAdd --batch to process all files without prompting")
                 console.print("Add --replace to overwrite originals (use with extreme caution!)")
 
