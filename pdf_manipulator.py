@@ -13,11 +13,12 @@ Design philosophy:
 """
 
 import os
+import re
 import sys
 import argparse
-import re
+
+from dataclasses import dataclass
 from pathlib import Path
-# from typing import Union
 from pypdf import PdfReader, PdfWriter
 from rich.console import Console
 from rich.table import Table
@@ -26,9 +27,16 @@ from rich.prompt import Confirm, Prompt
 console = Console()
 
 
-def parse_page_range(range_str: str, total_pages: int) -> tuple[set[int], str]:
+@dataclass
+class PageGroup:
+    pages: list[int]  # ordered list of pages in this group
+    is_range: bool    # True if this was specified as a range, False if individual page
+    original_spec: str  # the original string like "1-4" or "5"
+
+
+def parse_page_range(range_str: str, total_pages: int) -> tuple[set[int], str, list[PageGroup]]:
     """
-    Parse page range string and return set of page numbers (1-indexed) and a description.
+    Parse page range string and return set of page numbers (1-indexed), description, and groupings.
 
     Supports:
     - Single page: "5"
@@ -39,10 +47,11 @@ def parse_page_range(range_str: str, total_pages: int) -> tuple[set[int], str]:
     - Multiple: "1-3,7,9-11"
     - Slicing: "::2" (odd pages), "2::2" (even pages), "5:10:2" (every 2nd from 5 to 10)
 
-    Returns: (set of page numbers, description for filename)
+    Returns: (set of page numbers, description for filename, list of page groups)
     """
     pages = set()
     descriptions = []
+    groups = []  # Track the original groupings
 
     # Remove quotes and extra spaces
     range_str = range_str.strip().strip('"\'')
@@ -52,6 +61,8 @@ def parse_page_range(range_str: str, total_pages: int) -> tuple[set[int], str]:
 
     for part in parts:
         try:
+            group_pages = []  # Pages in this specific group
+            
             # Check for slicing syntax (contains :: or single : with 3 parts)
             if '::' in part or (part.count(':') == 2):
                 # Parse slicing: start:stop:step
@@ -64,6 +75,9 @@ def parse_page_range(range_str: str, total_pages: int) -> tuple[set[int], str]:
                 for p in range(start, stop + 1, step):
                     if 1 <= p <= total_pages:
                         pages.add(p)
+                        group_pages.append(p)
+
+                groups.append(PageGroup(group_pages, True, part))  # Step syntax is treated as range
 
                 if not slice_parts[0] and not slice_parts[1]:
                     if step == 2:
@@ -80,6 +94,8 @@ def parse_page_range(range_str: str, total_pages: int) -> tuple[set[int], str]:
                     n = int(match.group(1))
                     for p in range(1, min(n + 1, total_pages + 1)):
                         pages.add(p)
+                        group_pages.append(p)
+                    groups.append(PageGroup(group_pages, True, part))  # "first N" is treated as range
                     descriptions.append(f"first{n}")
 
             # Check for "last N" syntax
@@ -89,6 +105,8 @@ def parse_page_range(range_str: str, total_pages: int) -> tuple[set[int], str]:
                     n = int(match.group(1))
                     for p in range(max(1, total_pages - n + 1), total_pages + 1):
                         pages.add(p)
+                        group_pages.append(p)
+                    groups.append(PageGroup(group_pages, True, part))  # "last N" is treated as range
                     descriptions.append(f"last{n}")
 
             # Check for range syntax
@@ -99,9 +117,9 @@ def parse_page_range(range_str: str, total_pages: int) -> tuple[set[int], str]:
                     start_str, end_str = part.split('..')
                 else:
                     # Be careful with negative numbers
-                    parts = part.split(sep, 1)
-                    start_str = parts[0]
-                    end_str = parts[1] if len(parts) > 1 else ''
+                    parts_split = part.split(sep, 1)
+                    start_str = parts_split[0]
+                    end_str = parts_split[1] if len(parts_split) > 1 else ''
 
                 # Parse start and end
                 start = int(start_str) if start_str else 1
@@ -113,7 +131,9 @@ def parse_page_range(range_str: str, total_pages: int) -> tuple[set[int], str]:
                 for p in range(start, end + 1):
                     if 1 <= p <= total_pages:
                         pages.add(p)
+                        group_pages.append(p)
 
+                groups.append(PageGroup(group_pages, True, part))  # Range syntax is treated as range
                 descriptions.append(f"{start}-{end}")
 
             # Single page number
@@ -121,6 +141,8 @@ def parse_page_range(range_str: str, total_pages: int) -> tuple[set[int], str]:
                 page_num = int(part)
                 if 1 <= page_num <= total_pages:
                     pages.add(page_num)
+                    group_pages.append(page_num)
+                    groups.append(PageGroup(group_pages, False, part))  # Single page
                     descriptions.append(str(page_num))
                 else:
                     raise ValueError(f"Page {page_num} out of range (1-{total_pages})")
@@ -150,7 +172,7 @@ def parse_page_range(range_str: str, total_pages: int) -> tuple[set[int], str]:
     else:
         desc = f"page{desc}"
 
-    return pages, desc
+    return pages, desc, groups
 
 
 def extract_pages(pdf_path: Path, page_range: str) -> tuple[Path, float]:
@@ -160,7 +182,7 @@ def extract_pages(pdf_path: Path, page_range: str) -> tuple[Path, float]:
         total_pages = len(reader.pages)
 
         # Parse the page range
-        pages_to_extract, range_desc = parse_page_range(page_range, total_pages)
+        pages_to_extract, range_desc, groups = parse_page_range(page_range, total_pages)
 
         # Sort pages for output
         sorted_pages = sorted(pages_to_extract)
@@ -203,7 +225,7 @@ def extract_pages_separate(pdf_path: Path, page_range: str) -> list[tuple[Path, 
         total_pages = len(reader.pages)
 
         # Parse the page range
-        pages_to_extract, range_desc = parse_page_range(page_range, total_pages)
+        pages_to_extract, range_desc, groups = parse_page_range(page_range, total_pages)
 
         # Sort pages for output
         sorted_pages = sorted(pages_to_extract)
@@ -235,6 +257,70 @@ def extract_pages_separate(pdf_path: Path, page_range: str) -> list[tuple[Path, 
 
         console.print(f"[green]✓ Extracted {len(sorted_pages)} pages as separate files: {', '.join(map(str, sorted_pages))}[/green]")
 
+        return output_files
+
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        return []
+    except Exception as e:
+        console.print(f"[red]Error extracting pages from {pdf_path.name}: {e}[/red]")
+        return []
+
+
+def extract_pages_grouped(pdf_path: Path, page_range: str) -> list[tuple[Path, float]]:
+    """Extract pages respecting original groupings - ranges become multi-page files, individuals become single files."""
+    try:
+        reader = PdfReader(pdf_path)
+        total_pages = len(reader.pages)
+
+        # Parse with grouping information
+        pages_to_extract, range_desc, groups = parse_page_range(page_range, total_pages)
+        output_files = []
+
+        # Determine padding for filenames
+        max_pages = max(len(group.pages) for group in groups) if groups else 1
+        all_pages = [page for group in groups for page in group.pages]
+        padding = len(str(max(all_pages))) if all_pages else 1
+
+        for group in groups:
+            if group.is_range and len(group.pages) > 1:
+                # Multi-page file for ranges
+                sorted_pages = sorted(group.pages)
+                start_page = sorted_pages[0]
+                end_page = sorted_pages[-1]
+                
+                if len(sorted_pages) == (end_page - start_page + 1):
+                    # Consecutive range
+                    output_path = pdf_path.parent / f"{pdf_path.stem}_pages{start_page}-{end_page}.pdf"
+                else:
+                    # Non-consecutive (like step results)
+                    page_list = ",".join(map(str, sorted_pages))
+                    output_path = pdf_path.parent / f"{pdf_path.stem}_pages{page_list}.pdf"
+                
+                writer = PdfWriter()
+                for page_num in sorted_pages:
+                    writer.add_page(reader.pages[page_num - 1])
+                    
+            else:
+                # Single page file
+                page_num = group.pages[0]
+                page_str = str(page_num).zfill(padding)
+                output_path = pdf_path.parent / f"{pdf_path.stem}_page{page_str}.pdf"
+                
+                writer = PdfWriter()
+                writer.add_page(reader.pages[page_num - 1])
+
+            # Copy metadata and write file
+            if reader.metadata:
+                writer.add_metadata(reader.metadata)
+
+            with open(output_path, 'wb') as output_file:
+                writer.write(output_file)
+
+            file_size = output_path.stat().st_size / (1024 * 1024)
+            output_files.append((output_path, file_size))
+
+        console.print(f"[green]✓ Created {len(output_files)} grouped files[/green]")
         return output_files
 
     except ValueError as e:
@@ -450,32 +536,41 @@ def optimize_pdf(pdf_path: Path) -> tuple[Path, float]:
         return None, 0
 
 
-def decide_extraction_mode(pages_to_extract: set[int], page_range: str, interactive: bool = True) -> bool:
+def decide_extraction_mode(pages_to_extract: set[int], groups: list[PageGroup], interactive: bool = True) -> str:
     """
-    Decide whether to extract as separate files or single document.
-    Returns True for separate files, False for single document.
+    Decide extraction mode. Returns 'single', 'separate', or 'grouped'.
     """
     if not interactive:
-        return False  # Default to single document in batch mode
+        return 'single'  # Default to single document in batch mode
     
     num_pages = len(pages_to_extract)
+    num_groups = len(groups)
     
     if num_pages == 1:
-        # Single page - no need to ask
-        return False
+        return 'single'  # Single page - no need to ask
     
-    # Multiple pages - ask user preference
-    console.print(f"\n[yellow]Extracting {num_pages} pages: {', '.join(map(str, sorted(pages_to_extract)))}[/yellow]")
-    console.print("How would you like to extract these pages?")
+    # Show what groups we detected
+    console.print(f"\n[yellow]Extracting {num_pages} pages in {num_groups} groups:[/yellow]")
+    for group in groups:
+        if group.is_range:
+            page_range = f"{min(group.pages)}-{max(group.pages)}" if len(group.pages) > 1 else str(group.pages[0])
+            console.print(f"  Range: {group.original_spec} → pages {page_range}")
+        else:
+            console.print(f"  Single: page {group.pages[0]}")
+    
+    console.print("\nHow would you like to extract these pages?")
     console.print("  1. As a single document (combine all pages)")
     console.print("  2. As separate documents (one file per page)")
+    console.print("  3. Respect groupings (ranges→multi-page, individuals→single files)")
     
     while True:
-        choice = Prompt.ask("Choose option", choices=["1", "2"], default="1")
+        choice = Prompt.ask("Choose option", choices=["1", "2", "3"], default="1")
         if choice == "1":
-            return False  # Single document
+            return 'single'
         elif choice == "2":
-            return True   # Separate documents
+            return 'separate'
+        elif choice == "3":
+            return 'grouped'
 
 
 def process_multipage_pdfs(pdf_files: list[tuple[Path, int, float]], 
@@ -527,23 +622,40 @@ def process_single_pdf(pdf_path: Path, page_count: int, file_size: float,
     elif args.extract_pages:
         # Validate that extraction makes sense for this PDF
         try:
-            pages_to_extract, _ = parse_page_range(args.extract_pages, page_count)
+            pages_to_extract, _, groups = parse_page_range(args.extract_pages, page_count)
             if len(pages_to_extract) == page_count:
                 console.print("[yellow]Extracting all pages - consider using --optimize instead[/yellow]")
 
             # Determine extraction mode
-            separate_files = args.separate_files
-            if not args.batch and not args.separate_files:
-                # Interactive mode and no explicit flag - ask user
-                separate_files = decide_extraction_mode(pages_to_extract, args.extract_pages, not args.batch)
+            if args.respect_groups:
+                extraction_mode = 'grouped'
+            elif args.separate_files:
+                extraction_mode = 'separate'
+            elif not args.batch:
+                extraction_mode = decide_extraction_mode(pages_to_extract, groups, True)
+            else:
+                extraction_mode = 'single'
 
             if args.batch or Confirm.ask(f"Extract pages {args.extract_pages} from {pdf_path.name}?", default=True):
-                if separate_files:
+                if extraction_mode == 'separate':
                     # Extract as separate files
                     output_files = extract_pages_separate(pdf_path, args.extract_pages)
                     if output_files:
                         total_size = sum(size for _, size in output_files)
                         console.print(f"[green]✓ Created {len(output_files)} files:[/green]")
+                        for out_path, out_size in output_files:
+                            console.print(f"  - {out_path.name} ({out_size:.2f} MB)")
+                        if file_size > 0:
+                            console.print(f"[dim]Total size: {((total_size / file_size) * 100):.1f}% of original[/dim]")
+                        if args.replace and Confirm.ask("Replace original file?", default=False):
+                            pdf_path.unlink()
+                            console.print("[green]✓ Original file deleted[/green]")
+                elif extraction_mode == 'grouped':
+                    # Extract with groupings respected
+                    output_files = extract_pages_grouped(pdf_path, args.extract_pages)
+                    if output_files:
+                        total_size = sum(size for _, size in output_files)
+                        console.print(f"[green]✓ Created {len(output_files)} grouped files:[/green]")
                         for out_path, out_size in output_files:
                             console.print(f"  - {out_path.name} ({out_size:.2f} MB)")
                         if file_size > 0:
@@ -562,6 +674,7 @@ def process_single_pdf(pdf_path: Path, page_count: int, file_size: float,
                             pdf_path.unlink()
                             output_path.rename(pdf_path)
                             console.print("[green]✓ Original file replaced[/green]")
+
         except ValueError as e:
             console.print(f"[red]Error: {e}[/red]")
 
@@ -630,6 +743,7 @@ Examples:
     %(prog)s --strip-first             # Interactive: ask which PDFs to strip
     %(prog)s --extract-pages=3-7       # Extract pages 3-7 as single document
     %(prog)s --extract-pages=3-7 --separate-files  # Extract pages 3-7 as separate files
+    %(prog)s --extract-pages="1-3,7,9-11" --respect-groups  # Extract respecting groups
     %(prog)s --extract-pages="1-3,7"   # Extract pages 1-3 and 7 (asks: single or separate)
     %(prog)s --extract-pages="last 2"  # Extract last 2 pages
     %(prog)s --extract-pages=::2       # Extract odd pages
@@ -646,41 +760,43 @@ Note: No short arguments are provided to ensure clarity and prevent accidents.
     )
 
     parser.add_argument('path', type=Path, default=Path('.'), nargs='?',
-                        help='PDF file or folder containing PDF files (default: current directory)')
+        help='PDF file or folder containing PDF files (default: current directory)')
 
     # Version
     parser.add_argument('--version', action='version', version=f'%(prog)s {__version__}',
-                        help='Show program version and exit')
+        help='Show program version and exit')
 
     # Operations
     operations = parser.add_argument_group('operations')
     operations.add_argument('--strip-first', action='store_true',
-                            help='Strip multi-page PDFs to first page only (alias for --extract-pages=1)')
+        help='Strip multi-page PDFs to first page only (alias for --extract-pages=1)')
     operations.add_argument('--extract-pages', type=str, metavar='RANGE',
-                            help='Extract specific pages (e.g., "5", "3-7", "first 3", "last 2", "1-3,7,9-11", "::2")')
+        help='Extract specific pages (e.g., "5", "3-7", "first 3", "last 2", "1-3,7,9-11", "::2")')
     operations.add_argument('--split-pages', action='store_true',
-                            help='Split multi-page PDFs into individual page files')
+        help='Split multi-page PDFs into individual page files')
     operations.add_argument('--optimize', action='store_true',
-                            help='Optimize PDF file sizes')
+        help='Optimize PDF file sizes')
     operations.add_argument('--analyze', action='store_true',
-                            help='Analyze PDFs to understand file sizes')
+        help='Analyze PDFs to understand file sizes')
 
     # Extraction options
     extraction = parser.add_argument_group('extraction options')
     extraction.add_argument('--separate-files', action='store_true',
-                            help='Extract pages as separate documents (one file per page). Default: single document')
+        help='Extract pages as separate documents (one file per page). Default: single document')
+    extraction.add_argument('--respect-groups', action='store_true',
+        help='Respect comma-separated groupings: ranges→multi-page files, individuals→single files')
 
     # Processing modes
     modes = parser.add_argument_group('processing modes')
     modes.add_argument('--interactive', action='store_true',
-                        help='Process PDFs interactively (default for operations)')
+        help='Process PDFs interactively (default for operations)')
     modes.add_argument('--batch', action='store_true',
-                        help='Process all matching PDFs without individual prompts')
+        help='Process all matching PDFs without individual prompts')
 
     # Safety options
     safety = parser.add_argument_group('safety options')
     safety.add_argument('--replace', action='store_true',
-                        help='Replace original files after processing (CAREFUL!)')
+        help='Replace original files after processing (CAREFUL!)')
 
     args = parser.parse_args()
 
@@ -697,8 +813,12 @@ Note: No short arguments are provided to ensure clarity and prevent accidents.
         sys.exit(1)
 
     # Validate --separate-files usage
-    if args.separate_files and not args.extract_pages:
-        console.print("[red]Error: --separate-files can only be used with --extract-pages[/red]")
+    if (args.separate_files or args.respect_groups) and not args.extract_pages:
+        console.print("[red]Error: --separate-files and --respect-groups can only be used with --extract-pages[/red]")
+        sys.exit(1)
+
+    if args.separate_files and args.respect_groups:
+        console.print("[red]Error: Cannot use both --separate-files and --respect-groups[/red]")
         sys.exit(1)
 
     operations_count = sum([bool(args.extract_pages), args.split_pages, args.optimize, args.analyze])
@@ -739,6 +859,7 @@ Note: No short arguments are provided to ensure clarity and prevent accidents.
                 console.print("  --strip-first      Strip to first page only")
                 console.print("  --extract-pages    Extract specific pages (e.g., \"3-7\", \"last 2\")")
                 console.print("  --separate-files   Use with --extract-pages to create separate files")
+                console.print("  --respect-groups   Use with --extract-pages to respect groupings")
                 console.print("  --split-pages      Split into individual pages")
                 console.print("  --optimize         Optimize file size")
                 console.print("  --analyze          Analyze PDF contents")
@@ -777,10 +898,14 @@ Note: No short arguments are provided to ensure clarity and prevent accidents.
             if args.extract_pages:
                 operation = "extract"
                 console.print(f"\n[blue]Extract pages mode: {args.extract_pages}[/blue]")
-                if args.separate_files:
+
+                if args.respect_groups:
+                    console.print("[dim]Mode: Respect groupings (ranges→multi-page, individuals→single)[/dim]")
+                elif args.separate_files:
                     console.print("[dim]Mode: Extract as separate files[/dim]")
                 else:
-                    console.print("[dim]Mode: Extract as single document (use --separate-files for separate files)[/dim]")
+                    console.print("[dim]Mode: Extract as single document[/dim]")
+
             else:
                 operation = "split"
                 console.print("\n[blue]Split pages mode[/blue]")
@@ -803,9 +928,17 @@ Note: No short arguments are provided to ensure clarity and prevent accidents.
                         console.print(f"\n[cyan]Processing {pdf_path.name}[/cyan]...")
                         try:
                             # Check if extraction is valid for this PDF
-                            pages_to_extract, _ = parse_page_range(args.extract_pages, page_count)
+                            pages_to_extract, _, groups = parse_page_range(args.extract_pages, page_count)
                             
-                            if args.separate_files:
+                            if args.respect_groups:
+                                # Extract with groupings respected
+                                output_files = extract_pages_grouped(pdf_path, args.extract_pages)
+                                if output_files:
+                                    console.print(f"[green]✓ Created {len(output_files)} grouped files[/green]")
+                                    if args.replace:
+                                        pdf_path.unlink()
+                                        console.print("[yellow]✓ Deleted original[/yellow]")
+                            elif args.separate_files:
                                 # Extract as separate files
                                 output_files = extract_pages_separate(pdf_path, args.extract_pages)
                                 if output_files:
@@ -822,6 +955,7 @@ Note: No short arguments are provided to ensure clarity and prevent accidents.
                                         pdf_path.unlink()
                                         output_path.rename(pdf_path)
                                         console.print("[yellow]✓ Replaced original[/yellow]")
+
                         except ValueError as e:
                             console.print(f"[yellow]Skipping {pdf_path.name}: {e}[/yellow]")
                 else:
@@ -843,21 +977,34 @@ Note: No short arguments are provided to ensure clarity and prevent accidents.
                         console.print(f"\n[cyan]{pdf_path.name}[/cyan] - {page_count} pages, {file_size:.2f} MB")
                         try:
                             # Validate extraction for this PDF
-                            pages_to_extract, _ = parse_page_range(args.extract_pages, page_count)
+                            pages_to_extract, _, groups = parse_page_range(args.extract_pages, page_count)
                             
                             # Determine extraction mode
-                            separate_files = args.separate_files
-                            if not args.separate_files:
-                                # Ask user preference
-                                separate_files = decide_extraction_mode(pages_to_extract, args.extract_pages, True)
+                            if args.respect_groups:
+                                extraction_mode = 'grouped'
+                            elif args.separate_files:
+                                extraction_mode = 'separate'
+                            else:
+                                extraction_mode = decide_extraction_mode(pages_to_extract, groups, True)
                             
                             if Confirm.ask(f"Extract pages {args.extract_pages}?", default=True):
-                                if separate_files:
+                                if extraction_mode == 'separate':
                                     # Extract as separate files
                                     output_files = extract_pages_separate(pdf_path, args.extract_pages)
                                     if output_files:
                                         total_size = sum(size for _, size in output_files)
                                         console.print(f"[green]✓ Created {len(output_files)} files:[/green]")
+                                        for out_path, out_size in output_files:
+                                            console.print(f"  - {out_path.name} ({out_size:.2f} MB)")
+                                        if args.replace and Confirm.ask("Delete original file?", default=False):
+                                            pdf_path.unlink()
+                                            console.print("[green]✓ Original file deleted[/green]")
+                                elif extraction_mode == 'grouped':
+                                    # Extract with groupings respected
+                                    output_files = extract_pages_grouped(pdf_path, args.extract_pages)
+                                    if output_files:
+                                        total_size = sum(size for _, size in output_files)
+                                        console.print(f"[green]✓ Created {len(output_files)} grouped files:[/green]")
                                         for out_path, out_size in output_files:
                                             console.print(f"  - {out_path.name} ({out_size:.2f} MB)")
                                         if args.replace and Confirm.ask("Delete original file?", default=False):
@@ -874,6 +1021,7 @@ Note: No short arguments are provided to ensure clarity and prevent accidents.
                                             pdf_path.unlink()
                                             output_path.rename(pdf_path)
                                             console.print("[green]✓ Original file replaced[/green]")
+
                         except ValueError as e:
                             console.print(f"[yellow]Cannot extract from this PDF: {e}[/yellow]")
                 else:
@@ -889,6 +1037,7 @@ Note: No short arguments are provided to ensure clarity and prevent accidents.
                 console.print("  --strip-first      Strip to first page only")
                 console.print("  --extract-pages    Extract specific pages (e.g., \"3-7\", \"last 2\")")
                 console.print("  --separate-files   Use with --extract-pages to create separate files")
+                console.print("  --respect-groups   Use with --extract-pages to respect groupings")
                 console.print("  --split-pages      Split into individual pages")
                 console.print("  --optimize         Optimize file sizes")
                 console.print("  --analyze          Analyze PDF contents")
