@@ -2,97 +2,135 @@
 
 A sophisticated CLI tool to assess PDF files, extract specific pages, split documents, and optimize file sizes with a beautiful terminal interface.
 
+
 ## Features
 
 - 📊 **Smart PDF Assessment** - Scan files/folders and display comprehensive PDF information
+
 - ✂️ **Flexible Page Extraction** - Extract any pages with powerful range syntax
+
+- 🔀 **Smart Extraction Modes** - Extract as single documents, separate files, or respect original groupings
+
+- 📑 **Flexible File Organization** - Choose how extracted pages are organized and named
+
 - 📄 **Document Splitting** - Split multi-page PDFs into individual page files  
-- 🗜️ **File Optimization** - Compress PDFs to reduce file sizes
+
+- 🗜️ **File Optimization** - Compress PDFs to reduce file sizes (sometimes)
+
 - 🔍 **Content Analysis** - Analyze PDFs to understand file size composition
+
 - 🎨 **Beautiful CLI Interface** - Rich tables and colored output for better readability
+
 - 🛡️ **Safety First** - Explicit confirmations and non-destructive operations by default
+
 - ⚡ **Versatile Processing** - Handle single files or entire folders
+
 - 🚀 **Fast Performance** - Built on pypdf for efficient PDF manipulation
+
 
 ## Installation
 
-1. **Install Python 3.7+** if not already installed
+**Install Python 3.8+** (if not already installed)
 
-2. **Install dependencies**:
+
+### Option 1: Package Installation (Recommended)
+
+1. **Clone the repository**
+
+   ```
+   git clone <your-repo-url>
+   cd PDF-Manipulator
+   ```
+
+1. **Install dependencies**:
+
    ```bash
    pip install pypdf rich
    ```
 
-3. **Download the script**:
+1. **Run as a package**:
+
    ```bash
-   # Save as pdf_manipulator.py and make executable
-   chmod +x pdf_manipulator.py
+   python -m pdf_manipulator
    ```
 
+
+### Option 2: Development Installation
+
+   ```
+   pip install -e .
+   ```
+
+
 ## Usage
+
 
 ### Basic Operations
 
 ```bash
 # Scan current directory for PDFs
-./pdf_manipulator.py
+python -m pdf_manipulator
 
 # Scan specific directory  
-./pdf_manipulator.py /path/to/pdfs
+python -m pdf_manipulator /path/to/pdfs
 
 # Process single file
-./pdf_manipulator.py document.pdf
+python -m pdf_manipulator document.pdf
 
 # Show version
-./pdf_manipulator.py --version
+python -m pdf_manipulator --version
 ```
+
 
 ### Page Operations
 
 ```bash
 # Strip multi-page PDFs to first page only
-./pdf_manipulator.py --strip-first
+python -m pdf_manipulator --strip-first
 
 # Extract specific pages with flexible syntax
-./pdf_manipulator.py --extract-pages="3-7"        # Pages 3 through 7
-./pdf_manipulator.py --extract-pages="1-3,7,9-11" # Multiple ranges
-./pdf_manipulator.py --extract-pages="first 3"    # First 3 pages
-./pdf_manipulator.py --extract-pages="last 2"     # Last 2 pages
-./pdf_manipulator.py --extract-pages="::2"        # Odd pages (1,3,5...)
-./pdf_manipulator.py --extract-pages="2::2"       # Even pages (2,4,6...)
-./pdf_manipulator.py --extract-pages="5:15:3"     # Every 3rd page from 5-15
+python -m pdf_manipulator --extract-pages="3-7"        # Pages 3 through 7
+python -m pdf_manipulator --extract-pages="1-3,7,9-11" # Multiple ranges
+python -m pdf_manipulator --extract-pages="first 3"    # First 3 pages
+python -m pdf_manipulator --extract-pages="last 2"     # Last 2 pages
+python -m pdf_manipulator --extract-pages="::2"        # Odd pages (1,3,5...)
+python -m pdf_manipulator --extract-pages="2::2"       # Even pages (2,4,6...)
+python -m pdf_manipulator --extract-pages="5:15:3"     # Every 3rd page from 5-15
 
 # Split PDFs into individual pages
-./pdf_manipulator.py --split-pages
+python -m pdf_manipulator --split-pages
 ```
+
 
 ### File Operations
 
 ```bash
 # Optimize PDF file sizes
-./pdf_manipulator.py --optimize
+python -m pdf_manipulator --optimize
 
 # Analyze PDF content and file sizes
-./pdf_manipulator.py --analyze
+python -m pdf_manipulator --analyze
 
 # Process single file with specific operation
-./pdf_manipulator.py document.pdf --extract-pages="3-7"
-./pdf_manipulator.py document.pdf --split-pages
-./pdf_manipulator.py document.pdf --optimize
+python -m pdf_manipulator document.pdf --extract-pages="3-7"
+python -m pdf_manipulator document.pdf --split-pages
+python -m pdf_manipulator document.pdf --optimize
 ```
+
 
 ### Processing Modes
 
 ```bash
 # Interactive mode (default) - asks for each file
-./pdf_manipulator.py --extract-pages="1-3"
+python -m pdf_manipulator --extract-pages="1-3"
 
 # Batch mode - processes all matching files automatically
-./pdf_manipulator.py --extract-pages="1-3" --batch
+python -m pdf_manipulator --extract-pages="1-3" --batch
 
 # Replace original files after processing (use with caution!)
-./pdf_manipulator.py --optimize --replace
+python -m pdf_manipulator --optimize --replace
 ```
+
 
 ## Page Range Syntax
 
@@ -108,10 +146,47 @@ The `--extract-pages` option supports powerful and intuitive syntax:
 | `-7` | Open-ended | Start to page 7 |
 | `first 3` | First N pages | Pages 1, 2, 3 |
 | `last 2` | Last N pages | Last 2 pages |
-| `1-3,7,9-11` | Multiple ranges | Pages 1-3, 7, and 9-11 |
+| `"1-3,7,9-11"` | Multiple ranges | Pages 1-3, 7, and 9-11 |
+| `"1-3,7,9-11"` | With --respect-groups | Pages 1-3 as group, 7 alone, 9-11 as group |
 | `::2` | Step syntax | Odd pages (1,3,5...) |
 | `2::2` | Step syntax | Even pages (2,4,6...) |
 | `5:20:3` | Step with range | Every 3rd page from 5-20 |
+
+
+## Extraction Options
+
+Control how extracted pages are organized:
+
+
+### Single Document (Default)
+
+   ```bash
+   python -m pdf_manipulator --extract-pages="1-3,7,9-11"
+   # Creates: document_pages1-3,7,9-11.pdf
+   ```
+
+
+### Separate Documents
+
+   ```bash
+   python -m pdf_manipulator --extract-pages="1-3,7,9-11" --separate-files
+   # Creates: document_page01.pdf, document_page02.pdf, document_page03.pdf, 
+   #          document_page07.pdf, document_page09.pdf, document_page10.pdf, document_page11.pdf
+   ```
+
+
+### Separate Documents, Ranges Grouped in Single Document
+
+   ```bash
+   python -m pdf_manipulator --extract-pages="1-3,7,9-11" --respect-groups
+   # Creates: document_pages1-3.pdf, document_page07.pdf, document_pages9-11.pdf
+   ```
+
+### Interactive Choice
+
+When using `--extract-pages` without `--separate-files` or `--respect-groups`, the tool will prompt you to choose between the three modes above.
+
+
 
 ## Example Output
 
@@ -137,46 +212,51 @@ Available operations:
   --analyze       Analyze PDF contents
 ```
 
+
 ## Advanced Examples
+
 
 ### Extract Specific Content
 
 ```bash
 # Extract first page only from all PDFs
-./pdf_manipulator.py --strip-first --batch
+python -m pdf_manipulator --strip-first --batch
 
 # Extract pages 2-5 from a presentation
-./pdf_manipulator.py slides.pdf --extract-pages="2-5"
+python -m pdf_manipulator slides.pdf --extract-pages="2-5"
 
 # Extract every other page (odd pages)
-./pdf_manipulator.py --extract-pages="::2"
+python -m pdf_manipulator --extract-pages="::2"
 
 # Extract first and last pages only
-./pdf_manipulator.py --extract-pages="1,-1"
+python -m pdf_manipulator --extract-pages="1,-1"
 ```
+
 
 ### Batch Processing
 
 ```bash
 # Optimize all PDFs in a folder
-./pdf_manipulator.py /path/to/pdfs --optimize --batch
+python -m pdf_manipulator /path/to/pdfs --optimize --batch
 
 # Split all multi-page PDFs into individual pages
-./pdf_manipulator.py --split-pages --batch
+python -m pdf_manipulator --split-pages --batch
 
 # Extract first 3 pages from all PDFs and replace originals
-./pdf_manipulator.py --extract-pages="first 3" --batch --replace
+python -m pdf_manipulator --extract-pages="first 3" --batch --replace
 ```
+
 
 ### Analysis and Optimization
 
 ```bash
 # Analyze large PDFs to understand file sizes
-./pdf_manipulator.py --analyze
+python -m pdf_manipulator --analyze
 
 # Optimize a specific large file
-./pdf_manipulator.py large_document.pdf --optimize
+python -m pdf_manipulator large_document.pdf --optimize
 ```
+
 
 ## Safety Features
 
@@ -186,12 +266,14 @@ Available operations:
 - **Long-form arguments only** - No short flags to prevent accidental misuse
 - **Validation** - Page ranges are validated before processing
 
+
 ## Design Philosophy
 
-- **Clarity over brevity** - Uses descriptive `--long-arguments` instead of `-short` flags
+- **Clarity over brevity** - Uses descriptive `--long-arguments` instead of `-s` short flags
 - **Safety first** - Destructive operations require explicit confirmation
 - **Explicit is better than implicit** - No ambiguous behavior or hidden defaults
 - **Rich feedback** - Beautiful tables and progress indicators for better user experience
+
 
 ## Integration with Other Tools
 
@@ -202,13 +284,17 @@ The tool works well with other PDF utilities:
 - **pandoc**: Convert documents to PDF before processing
 - **pdfunite/pdftk**: Merge PDFs before page extraction
 
+
 ## Troubleshooting
+
 
 ### Common Issues
 
 1. **"pypdf not found"**: Run `pip install pypdf rich`
-2. **"Permission denied"**: Make script executable with `chmod +x pdf_manipulator.py`
-3. **"Invalid page range"**: Check syntax - use quotes for complex ranges like `"1-3,7"`
+1. **"Invalid page range"**: Check syntax - use quotes for complex ranges like `"1-3,7"`
+1. **"No module named pdf_manipulator"**: Ensure you're running from the correct directory, or add the location of parent folder of `pdf_manipulator` folder to the `PYTHONPATH` environment variable
+1. **Import errors**: Try `python -m pdf_manipulator` instead of running files directly
+
 
 ### Performance Tips
 
@@ -216,9 +302,13 @@ The tool works well with other PDF utilities:
 - The `--analyze` operation helps identify large files that benefit from optimization
 - Consider `--optimize` for scanned PDFs with large file sizes
 
+
 ## License
 
+GNU General Public License 3.0
+
 This tool is provided as-is for personal and commercial use.
+
 
 ## Contributing
 
