@@ -5,11 +5,11 @@ import argparse
 from pathlib import Path
 from rich.console import Console
 
-from ._version import __version__
-from .core.folder_operations import handle_folder_operations
-from .core.scanner import scan_folder, scan_file
-from .core.processor import process_single_file_operations
-from .ui import display_pdf_table
+from pdf_manipulator._version import __version__
+from pdf_manipulator.core.folder_operations import handle_folder_operations
+from pdf_manipulator.core.scanner import scan_folder, scan_file
+from pdf_manipulator.core.processor import process_single_file_operations
+from pdf_manipulator.ui import display_pdf_table
 
 console = Console()
 

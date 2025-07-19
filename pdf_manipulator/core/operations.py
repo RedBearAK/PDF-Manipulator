@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 from pypdf import PdfReader, PdfWriter
 from rich.console import Console
-from .parser import parse_page_range
+from pdf_manipulator.core.parser import parse_page_range
 
 console = Console()
 

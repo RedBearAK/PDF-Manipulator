@@ -4,7 +4,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 from rich.prompt import Confirm, Prompt
-from .core.parser import PageGroup
+from pdf_manipulator.core.parser import PageGroup
 
 console = Console()
 

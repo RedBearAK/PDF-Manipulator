@@ -5,9 +5,9 @@ from pathlib import Path
 from rich.console import Console
 from rich.prompt import Confirm
 
-from .operations import *
-from .scanner import *
-from ..ui import *
+from pdf_manipulator.core.operations import *
+from pdf_manipulator.core.scanner import *
+from pdf_manipulator.ui import *
 
 console = Console()
 

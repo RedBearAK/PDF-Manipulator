@@ -4,8 +4,8 @@ from pathlib import Path
 from rich.console import Console
 from rich.prompt import Confirm
 
-from ..ui import decide_extraction_mode, show_folder_help
-from .operations import (
+from pdf_manipulator.ui import decide_extraction_mode, show_folder_help
+from pdf_manipulator.core.operations import (
     analyze_pdf,
     optimize_pdf,
     extract_pages,
@@ -13,8 +13,8 @@ from .operations import (
     extract_pages_separate,
     split_to_pages,
 )
-from .parser import parse_page_range
-from .processor import process_multipage_pdfs
+from pdf_manipulator.core.parser import parse_page_range
+from pdf_manipulator.core.processor import process_multipage_pdfs
 
 
 console = Console()
