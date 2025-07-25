@@ -23,6 +23,7 @@ def parse_page_range(range_str: str, total_pages: int) -> tuple[set[int], str, l
     - Last N: "last 2" or "last-2"
     - Multiple: "1-3,7,9-11"
     - Slicing: "::2" (odd pages), "2::2" (even pages), "5:10:2" (every 2nd from 5 to 10)
+    - All pages: "all"
 
     Returns: (set of page numbers, description for filename, list of page groups)
     """
@@ -32,6 +33,16 @@ def parse_page_range(range_str: str, total_pages: int) -> tuple[set[int], str, l
 
     # Remove quotes and extra spaces
     range_str = range_str.strip().strip('"\'')
+
+    # NEW: Handle "all" keyword
+    if range_str.lower() == "all":
+        pages = set(range(1, total_pages + 1))
+        groups = [PageGroup(list(pages), True, "all")]
+        return pages, "all", groups
+
+    # NEW: Detect if someone passed a filename instead of a range
+    if '.' in range_str and (range_str.endswith('.pdf') or '/' in range_str or '\\' in range_str):
+        raise ValueError(f"'{range_str}' looks like a filename, not a page range. Use 'all' to extract all pages.")
 
     # Handle comma-separated ranges
     parts = [p.strip() for p in range_str.split(',')]
