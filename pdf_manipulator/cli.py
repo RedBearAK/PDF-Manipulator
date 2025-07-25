@@ -94,8 +94,11 @@ def main():
     operations = parser.add_argument_group('operations')
     operations.add_argument('--strip-first', action='store_true',
         help='Strip multi-page PDFs to first page only (alias for --extract-pages=1)')
-    operations.add_argument('--extract-pages', type=str, metavar='RANGE',
-        help='Extract specific pages (e.g., "5", "3-7", "first 3", "last 2", "1-3,7,9-11", "::2")')
+    # operations.add_argument('--extract-pages', type=str, metavar='RANGE',
+    #     help='Extract specific pages (e.g., "5", "3-7", "first 3", "last 2", "1-3,7,9-11", "::2")')
+    operations.add_argument('--extract-pages', type=str, metavar='RANGE', nargs='?', const='all',
+        help=('Extract specific pages (e.g., "5", "3-7", "all", "first 3", "last 2", "1-3,7,9-11", '
+                '"::2"). [Defaults to "all" if no range specified.]'))
     operations.add_argument('--split-pages', action='store_true',
         help='Split multi-page PDFs into individual page files')
     operations.add_argument('--optimize', action='store_true',
