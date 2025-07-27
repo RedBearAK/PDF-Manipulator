@@ -1,11 +1,13 @@
 """Core PDF manipulation operations with resource optimization and file conflict handling."""
 
+import sys
 import argparse
 
 from pypdf import PdfReader, PdfWriter
 from pathlib import Path
 from rich.console import Console
 from pdf_manipulator.core.parser import parse_page_range
+
 
 console = Console()
 
@@ -70,6 +72,67 @@ def _create_optimized_writer_from_pages(reader: PdfReader, page_indices: list[in
     return writer
 
 
+def _check_and_offer_ghostscript_fix(pdf_path: Path, page_count: int) -> bool:
+    """
+    Check if PDF is malformed and offer Ghostscript fix.
+    
+    Returns:
+        True if user wants to continue with original, False if they want to fix first
+    """
+    try:
+        from pdf_manipulator.core.ghostscript import detect_malformed_pdf, check_ghostscript_availability
+        
+        is_malformed, description = detect_malformed_pdf(pdf_path)
+        
+        if is_malformed:
+            console.print(f"\n[yellow]⚠️  Malformed PDF detected: {description}[/yellow]")
+            console.print("[yellow]This will cause extracted pages to be unnecessarily large[/yellow]")
+            console.print("[dim]Example: 2.4MB per page instead of 10KB per page[/dim]")
+            
+            if check_ghostscript_availability():
+                from rich.prompt import Confirm
+                if Confirm.ask("Fix with Ghostscript first? (Recommended)", default=True):
+                    console.print("\n[blue]Fixing PDF structure...[/blue]")
+                    from pdf_manipulator.core.ghostscript import fix_malformed_pdf
+                    
+                    try:
+                        output_path, new_size = fix_malformed_pdf(pdf_path, quality="default")
+                        if output_path and output_path.exists():
+                            console.print(f"[green]✓ Fixed PDF created: {output_path.name}[/green]")
+                            console.print("[yellow]Continue processing with the fixed PDF? "
+                                        "Or exit and use the fixed version manually?[/yellow]")
+                            
+                            if Confirm.ask("Continue with fixed PDF for this operation?", default=True):
+                                # Update the path to use the fixed PDF
+                                return output_path
+                            else:
+                                console.print("[blue]Exiting. Use the fixed PDF for future operations.[/blue]")
+                                sys.exit(0)
+                        else:
+                            console.print("[red]Failed to create fixed PDF, continuing with original[/red]")
+                            return pdf_path
+                    except Exception as e:
+                        console.print(f"[red]Error fixing PDF: {e}[/red]")
+                        console.print("[yellow]Continuing with original PDF[/yellow]")
+                        return pdf_path
+                else:
+                    console.print("[yellow]Continuing with original (pages may be larger than necessary)[/yellow]")
+                    return pdf_path
+            else:
+                console.print("[yellow]Ghostscript not available for fixing, continuing with original[/yellow]")
+                console.print("[dim]Install with: brew install ghostscript[/dim]")
+                return pdf_path
+        
+        return pdf_path
+        
+    except ImportError:
+        # Ghostscript module not available, continue silently
+        return pdf_path
+    except Exception:
+        # Any other error, continue silently
+        return pdf_path
+
+
 def process_folder_operations(args: argparse.Namespace, pdf_files: list[tuple[Path, int, float]]):
     """Delegate to folder operations module."""
     from .folder_operations import handle_folder_operations
@@ -78,6 +141,10 @@ def process_folder_operations(args: argparse.Namespace, pdf_files: list[tuple[Pa
 
 def extract_pages(pdf_path: Path, page_range: str) -> tuple[Path, float]:
     """Extract specified pages from PDF as a single document."""
+    
+    # Check for malformed PDF and offer fix
+    pdf_path = _check_and_offer_ghostscript_fix(pdf_path, 0)  # page_count not needed for this check
+    
     try:
         reader = PdfReader(pdf_path)
         total_pages = len(reader.pages)
@@ -123,6 +190,10 @@ def extract_pages(pdf_path: Path, page_range: str) -> tuple[Path, float]:
 
 def extract_pages_separate(pdf_path: Path, page_range: str, remove_images: bool = False) -> list[tuple[Path, float]]:
     """Extract specified pages from PDF as separate documents with resource optimization."""
+    
+    # Check for malformed PDF and offer fix
+    pdf_path = _check_and_offer_ghostscript_fix(pdf_path, 0)
+    
     try:
         reader = PdfReader(pdf_path)
         total_pages = len(reader.pages)
@@ -203,6 +274,10 @@ def extract_pages_separate(pdf_path: Path, page_range: str, remove_images: bool 
 
 def extract_pages_grouped(pdf_path: Path, page_range: str) -> list[tuple[Path, float]]:
     """Extract pages respecting original groupings with resource optimization."""
+    
+    # Check for malformed PDF and offer fix
+    pdf_path = _check_and_offer_ghostscript_fix(pdf_path, 0)
+    
     try:
         reader = PdfReader(pdf_path)
         total_pages = len(reader.pages)
@@ -272,6 +347,10 @@ def extract_pages_grouped(pdf_path: Path, page_range: str) -> list[tuple[Path, f
 
 def split_to_pages(pdf_path: Path) -> list[tuple[Path, float]]:
     """Split PDF into individual pages with resource optimization."""
+    
+    # Check for malformed PDF and offer fix
+    pdf_path = _check_and_offer_ghostscript_fix(pdf_path, 0)
+    
     output_files = []
 
     try:
