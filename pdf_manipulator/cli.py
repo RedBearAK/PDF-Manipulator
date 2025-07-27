@@ -106,6 +106,20 @@ def main():
     operations.add_argument('--analyze', action='store_true',
         help='Analyze PDFs to understand file sizes')
 
+    # Ghostscript operations
+    operations.add_argument('--gs-fix', action='store_true',
+        help='Fix malformed PDFs using Ghostscript (deduplicates resources)')
+    operations.add_argument('--gs-batch-fix', action='store_true',
+        help='Fix all malformed PDFs in folder using Ghostscript')
+    operations.add_argument('--gs-quality', choices=['screen', 'ebook', 'printer', 'prepress', 'default'],
+        default='default', help='Ghostscript quality setting')
+    operations.add_argument('--recursive', action='store_true',
+        help='Process subdirectories recursively')
+    operations.add_argument('--dry-run', action='store_true',
+        help='Show what would be done without actually doing it')
+    operations.add_argument('--replace-originals', action='store_true',
+        help='Replace original files with fixed versions (CAREFUL!)')
+
     # Extraction options
     extraction = parser.add_argument_group('extraction options')
     extraction.add_argument('--separate-files', action='store_true',
