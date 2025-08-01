@@ -16,6 +16,7 @@ from pdf_manipulator.core.operations import (
     split_to_pages,
 )
 from pdf_manipulator.core.malformation_checker import check_and_fix_malformation_for_extraction
+from pdf_manipulator.core.warning_suppression import suppress_all_pdf_warnings
 
 
 console = Console()
@@ -107,56 +108,58 @@ def process_extract_split_mode(args: argparse.Namespace, pdf_files: list[tuple[P
 def process_batch_extract(args: argparse.Namespace, pdf_files: list[tuple[Path, int, float]]):
     """Handle batch extraction processing."""
 
-    # For extract, process all PDFs (not just multi-page)
-    for pdf_path, page_count, file_size in pdf_files:
-        console.print(f"\n[cyan]Processing {pdf_path.name}[/cyan]...")
-        try:
-            # Check if extraction is valid for this PDF
-            # pages_to_extract, _, groups = parse_page_range(args.extract_pages, page_count)
-            pages_to_extract, _, groups = parse_page_range(args.extract_pages, page_count, pdf_path)
-            
-            if args.respect_groups:
-                # Extract with groupings respected
-                output_files = extract_pages_grouped(pdf_path, args.extract_pages)
-                if output_files:
-                    console.print(f"[green]✓ Created {len(output_files)} grouped files[/green]")
-                    if args.replace:
-                        pdf_path.unlink()
-                        console.print("[yellow]✓ Deleted original[/yellow]")
-            elif args.separate_files:
-                # Extract as separate files
-                output_files = extract_pages_separate(pdf_path, args.extract_pages)
-                if output_files:
-                    console.print(f"[green]✓ Created {len(output_files)} separate files[/green]")
-                    if args.replace:
-                        pdf_path.unlink()
-                        console.print("[yellow]✓ Deleted original[/yellow]")
-            else:
-                # Extract as single document
-                output_path, new_size = extract_pages(pdf_path, args.extract_pages)
-                if output_path:
-                    console.print(f"[green]✓ Created:[/green] {output_path.name}")
-                    if args.replace:
-                        pdf_path.unlink()
-                        output_path.rename(pdf_path)
-                        console.print("[yellow]✓ Replaced original[/yellow]")
+    with suppress_all_pdf_warnings():
+        # For extract, process all PDFs (not just multi-page)
+        for pdf_path, page_count, file_size in pdf_files:
+            console.print(f"\n[cyan]Processing {pdf_path.name}[/cyan]...")
+            try:
+                # Check if extraction is valid for this PDF
+                # pages_to_extract, _, groups = parse_page_range(args.extract_pages, page_count)
+                pages_to_extract, _, groups = parse_page_range(args.extract_pages, page_count, pdf_path)
+                
+                if args.respect_groups:
+                    # Extract with groupings respected
+                    output_files = extract_pages_grouped(pdf_path, args.extract_pages)
+                    if output_files:
+                        console.print(f"[green]✓ Created {len(output_files)} grouped files[/green]")
+                        if args.replace:
+                            pdf_path.unlink()
+                            console.print("[yellow]✓ Deleted original[/yellow]")
+                elif args.separate_files:
+                    # Extract as separate files
+                    output_files = extract_pages_separate(pdf_path, args.extract_pages)
+                    if output_files:
+                        console.print(f"[green]✓ Created {len(output_files)} separate files[/green]")
+                        if args.replace:
+                            pdf_path.unlink()
+                            console.print("[yellow]✓ Deleted original[/yellow]")
+                else:
+                    # Extract as single document
+                    output_path, new_size = extract_pages(pdf_path, args.extract_pages)
+                    if output_path:
+                        console.print(f"[green]✓ Created:[/green] {output_path.name}")
+                        if args.replace:
+                            pdf_path.unlink()
+                            output_path.rename(pdf_path)
+                            console.print("[yellow]✓ Replaced original[/yellow]")
 
-        except ValueError as e:
-            console.print(f"[yellow]Skipping {pdf_path.name}: {e}[/yellow]")
+            except ValueError as e:
+                console.print(f"[yellow]Skipping {pdf_path.name}: {e}[/yellow]")
 
 def process_batch_split(args: argparse.Namespace, pdf_files: list[tuple[Path, int, float]]):
     """Handle batch split processing."""
 
-    # Split mode - only multi-page PDFs
-    multi_page_pdfs = [(p, c, s) for p, c, s in pdf_files if c > 1]
-    for pdf_path, page_count, file_size in multi_page_pdfs:
-        console.print(f"\n[cyan]Processing {pdf_path.name}[/cyan]...")
-        output_files = split_to_pages(pdf_path)
-        if output_files:
-            console.print(f"[green]✓ Split into {len(output_files)} files[/green]")
-            if args.replace:
-                pdf_path.unlink()
-                console.print("[yellow]✓ Deleted original[/yellow]")
+    with suppress_all_pdf_warnings():
+        # Split mode - only multi-page PDFs
+        multi_page_pdfs = [(p, c, s) for p, c, s in pdf_files if c > 1]
+        for pdf_path, page_count, file_size in multi_page_pdfs:
+            console.print(f"\n[cyan]Processing {pdf_path.name}[/cyan]...")
+            output_files = split_to_pages(pdf_path)
+            if output_files:
+                console.print(f"[green]✓ Split into {len(output_files)} files[/green]")
+                if args.replace:
+                    pdf_path.unlink()
+                    console.print("[yellow]✓ Deleted original[/yellow]")
 
 
 def process_interactive_extract(args: argparse.Namespace, pdf_files: list[tuple[Path, int, float]]):

@@ -1,13 +1,13 @@
 """Core PDF manipulation operations with resource optimization and file conflict handling."""
 
-import sys
 import argparse
 
 from pypdf import PdfReader, PdfWriter
 from pathlib import Path
-from contextlib import contextmanager
 from rich.console import Console
+
 from pdf_manipulator.core.parser import parse_page_range
+from pdf_manipulator.core.warning_suppression import suppress_pdf_warnings
 
 
 console = Console()
@@ -97,40 +97,41 @@ def extract_pages(pdf_path: Path, page_range: str) -> tuple[Path, float]:
     """Extract specified pages from PDF as a single document."""
     
     try:
-        reader = PdfReader(pdf_path)
-        total_pages = len(reader.pages)
+        with suppress_pdf_warnings(show_summary=True):
+            reader = PdfReader(pdf_path)
+            total_pages = len(reader.pages)
 
-        # Parse the page range
-        # pages_to_extract, range_desc, groups = parse_page_range(page_range, total_pages)
-        pages_to_extract, range_desc, groups = parse_page_range(page_range, total_pages, pdf_path)
+            # Parse the page range
+            # pages_to_extract, range_desc, groups = parse_page_range(page_range, total_pages)
+            pages_to_extract, range_desc, groups = parse_page_range(page_range, total_pages, pdf_path)
 
-        # Sort pages for output
-        sorted_pages = sorted(pages_to_extract)
+            # Sort pages for output
+            sorted_pages = sorted(pages_to_extract)
 
-        # Create output filename with conflict handling
-        base_output_path = pdf_path.parent / f"{pdf_path.stem}_{range_desc}.pdf"
-        output_path = _get_unique_filename(base_output_path)
+            # Create output filename with conflict handling
+            base_output_path = pdf_path.parent / f"{pdf_path.stem}_{range_desc}.pdf"
+            output_path = _get_unique_filename(base_output_path)
 
-        # Create optimized writer
-        page_indices = [p - 1 for p in sorted_pages]  # Convert to 0-indexed
-        writer = _create_optimized_writer_from_pages(reader, page_indices)
+            # Create optimized writer
+            page_indices = [p - 1 for p in sorted_pages]  # Convert to 0-indexed
+            writer = _create_optimized_writer_from_pages(reader, page_indices)
 
-        # Copy metadata
-        if reader.metadata:
-            writer.add_metadata(reader.metadata)
+            # Copy metadata
+            if reader.metadata:
+                writer.add_metadata(reader.metadata)
 
-        # Write the output
-        with open(output_path, 'wb') as output_file:
-            writer.write(output_file)
+            # Write the output
+            with open(output_path, 'wb') as output_file:
+                writer.write(output_file)
 
-        # Get new file size
-        new_size = output_path.stat().st_size / (1024 * 1024)
+            # Get new file size
+            new_size = output_path.stat().st_size / (1024 * 1024)
 
-        console.print(f"[green]✓ Extracted {len(sorted_pages)} pages: {', '.join(map(str, sorted_pages))}[/green]")
-        if output_path != base_output_path:
-            console.print(f"[yellow]Note: Saved as {output_path.name} to avoid overwriting existing file[/yellow]")
+            console.print(f"[green]✓ Extracted {len(sorted_pages)} pages: {', '.join(map(str, sorted_pages))}[/green]")
+            if output_path != base_output_path:
+                console.print(f"[yellow]Note: Saved as {output_path.name} to avoid overwriting existing file[/yellow]")
 
-        return output_path, new_size
+            return output_path, new_size
 
     except ValueError as e:
         console.print(f"[red]Error: {e}[/red]")
@@ -144,74 +145,75 @@ def extract_pages_separate(pdf_path: Path, page_range: str, remove_images: bool 
     """Extract specified pages from PDF as separate documents with resource optimization."""
     
     try:
-        reader = PdfReader(pdf_path)
-        total_pages = len(reader.pages)
+        with suppress_pdf_warnings(show_summary=True):
+            reader = PdfReader(pdf_path)
+            total_pages = len(reader.pages)
 
-        # Parse the page range
-        pages_to_extract, range_desc, groups = parse_page_range(page_range, total_pages)
+            # Parse the page range
+            pages_to_extract, range_desc, groups = parse_page_range(page_range, total_pages)
 
-        # Sort pages for output
-        sorted_pages = sorted(pages_to_extract)
-        output_files = []
+            # Sort pages for output
+            sorted_pages = sorted(pages_to_extract)
+            output_files = []
 
-        # Check for malformed PDF (every page has too many images)
-        sample_page = reader.pages[0]
-        image_count = 0
-        if '/XObject' in sample_page.get('/Resources', {}):
-            xobjects = sample_page['/Resources']['/XObject'].get_object()
-            images = [x for x in xobjects if xobjects[x].get('/Subtype') == '/Image']
-            image_count = len(images)
-        
-        is_malformed = image_count >= total_pages * 0.5  # If page has 50%+ of total pages as images
-        
-        if is_malformed and not remove_images:
-            console.print(f"[yellow]Detected malformed PDF: Each page has {image_count} images (likely duplicated across all pages)[/yellow]")
-            console.print("[yellow]Consider using --remove-images flag for dramatic size reduction[/yellow]")
+            # Check for malformed PDF (every page has too many images)
+            sample_page = reader.pages[0]
+            image_count = 0
+            if '/XObject' in sample_page.get('/Resources', {}):
+                xobjects = sample_page['/Resources']['/XObject'].get_object()
+                images = [x for x in xobjects if xobjects[x].get('/Subtype') == '/Image']
+                image_count = len(images)
+            
+            is_malformed = image_count >= total_pages * 0.5  # If page has 50%+ of total pages as images
+            
+            if is_malformed and not remove_images:
+                console.print(f"[yellow]Detected malformed PDF: Each page has {image_count} images (likely duplicated across all pages)[/yellow]")
+                console.print("[yellow]Consider using --remove-images flag for dramatic size reduction[/yellow]")
 
-        # Determine zero padding for filenames
-        padding = len(str(max(sorted_pages)))
+            # Determine zero padding for filenames
+            padding = len(str(max(sorted_pages)))
 
-        for page_num in sorted_pages:
-            # Create filename for this page with conflict handling
-            page_str = str(page_num).zfill(padding)
+            for page_num in sorted_pages:
+                # Create filename for this page with conflict handling
+                page_str = str(page_num).zfill(padding)
+                if remove_images:
+                    base_output_path = pdf_path.parent / f"{pdf_path.stem}_page{page_str}_text.pdf"
+                else:
+                    base_output_path = pdf_path.parent / f"{pdf_path.stem}_page{page_str}.pdf"
+                output_path = _get_unique_filename(base_output_path)
+
+                # Create optimized writer for single page
+                writer = _create_optimized_writer_from_pages(reader, [page_num - 1])
+
+                # Remove images if requested (for malformed PDFs)
+                if remove_images:
+                    try:
+                        writer.remove_images()
+                        console.print(f"[dim]Removed images from page {page_num}[/dim]")
+                    except Exception as e:
+                        console.print(f"[yellow]Could not remove images from page {page_num}: {e}[/yellow]")
+
+                # Copy metadata
+                if reader.metadata:
+                    writer.add_metadata(reader.metadata)
+
+                # Write the output
+                with open(output_path, 'wb') as output_file:
+                    writer.write(output_file)
+
+                # Get file size
+                file_size = output_path.stat().st_size / (1024 * 1024)
+                output_files.append((output_path, file_size))
+
+                if output_path != base_output_path:
+                    console.print(f"[yellow]Note: Page {page_num} saved as {output_path.name} to avoid overwriting[/yellow]")
+
             if remove_images:
-                base_output_path = pdf_path.parent / f"{pdf_path.stem}_page{page_str}_text.pdf"
+                console.print(f"[green]✓ Extracted {len(sorted_pages)} pages as text-only files: {', '.join(map(str, sorted_pages))}[/green]")
             else:
-                base_output_path = pdf_path.parent / f"{pdf_path.stem}_page{page_str}.pdf"
-            output_path = _get_unique_filename(base_output_path)
+                console.print(f"[green]✓ Extracted {len(sorted_pages)} pages as separate files: {', '.join(map(str, sorted_pages))}[/green]")
 
-            # Create optimized writer for single page
-            writer = _create_optimized_writer_from_pages(reader, [page_num - 1])
-
-            # Remove images if requested (for malformed PDFs)
-            if remove_images:
-                try:
-                    writer.remove_images()
-                    console.print(f"[dim]Removed images from page {page_num}[/dim]")
-                except Exception as e:
-                    console.print(f"[yellow]Could not remove images from page {page_num}: {e}[/yellow]")
-
-            # Copy metadata
-            if reader.metadata:
-                writer.add_metadata(reader.metadata)
-
-            # Write the output
-            with open(output_path, 'wb') as output_file:
-                writer.write(output_file)
-
-            # Get file size
-            file_size = output_path.stat().st_size / (1024 * 1024)
-            output_files.append((output_path, file_size))
-
-            if output_path != base_output_path:
-                console.print(f"[yellow]Note: Page {page_num} saved as {output_path.name} to avoid overwriting[/yellow]")
-
-        if remove_images:
-            console.print(f"[green]✓ Extracted {len(sorted_pages)} pages as text-only files: {', '.join(map(str, sorted_pages))}[/green]")
-        else:
-            console.print(f"[green]✓ Extracted {len(sorted_pages)} pages as separate files: {', '.join(map(str, sorted_pages))}[/green]")
-
-        return output_files
+            return output_files
 
     except ValueError as e:
         console.print(f"[red]Error: {e}[/red]")
@@ -369,38 +371,39 @@ def optimize_pdf(pdf_path: Path) -> tuple[Path, float]:
 def analyze_pdf(pdf_path: Path) -> None:
     """Analyze PDF content to understand file size."""
     try:
-        reader = PdfReader(pdf_path)
-        total_images = 0
+        with suppress_pdf_warnings(show_summary=True):
+            reader = PdfReader(pdf_path)
+            total_images = 0
 
-        console.print(f"\n[cyan]Analysis of {pdf_path.name}:[/cyan]")
-        console.print(f"Pages: {len(reader.pages)}")
-        console.print(f"File size: {pdf_path.stat().st_size / (1024 * 1024):.2f} MB")
-        console.print(f"Average per page: {pdf_path.stat().st_size / (1024 * len(reader.pages)):.0f} KB")
+            console.print(f"\n[cyan]Analysis of {pdf_path.name}:[/cyan]")
+            console.print(f"Pages: {len(reader.pages)}")
+            console.print(f"File size: {pdf_path.stat().st_size / (1024 * 1024):.2f} MB")
+            console.print(f"Average per page: {pdf_path.stat().st_size / (1024 * len(reader.pages)):.0f} KB")
 
-        # Check for images in each page
-        for i, page in enumerate(reader.pages):
-            if '/XObject' in page.get('/Resources', {}):
-                xobjects = page['/Resources']['/XObject'].get_object()
-                images = [x for x in xobjects if xobjects[x].get('/Subtype') == '/Image']
-                if images:
-                    console.print(f"  Page {i+1}: {len(images)} image(s)")
-                    total_images += len(images)
+            # Check for images in each page
+            for i, page in enumerate(reader.pages):
+                if '/XObject' in page.get('/Resources', {}):
+                    xobjects = page['/Resources']['/XObject'].get_object()
+                    images = [x for x in xobjects if xobjects[x].get('/Subtype') == '/Image']
+                    if images:
+                        console.print(f"  Page {i+1}: {len(images)} image(s)")
+                        total_images += len(images)
 
-        if total_images > 0:
-            console.print(f"[yellow]Total images found: {total_images}[/yellow]")
-            console.print("[dim]Note: Large file sizes often indicate high-resolution scanned images[/dim]")
+            if total_images > 0:
+                console.print(f"[yellow]Total images found: {total_images}[/yellow]")
+                console.print("[dim]Note: Large file sizes often indicate high-resolution scanned images[/dim]")
 
-        # Check if it's likely a scanned PDF
-        text_found = False
-        for page in reader.pages[:1]:  # Just check first page
-            text = page.extract_text().strip()
-            if len(text) > 50:  # Arbitrary threshold
-                text_found = True
-                break
+            # Check if it's likely a scanned PDF
+            text_found = False
+            for page in reader.pages[:1]:  # Just check first page
+                text = page.extract_text().strip()
+                if len(text) > 50:  # Arbitrary threshold
+                    text_found = True
+                    break
 
-        if not text_found and total_images > 0:
-            console.print("[yellow]This appears to be a scanned PDF (images, not text)[/yellow]")
-            console.print("[dim]Scanned PDFs often have large images that can't be easily optimized without quality loss[/dim]")
+            if not text_found and total_images > 0:
+                console.print("[yellow]This appears to be a scanned PDF (images, not text)[/yellow]")
+                console.print("[dim]Scanned PDFs often have large images that can't be easily optimized without quality loss[/dim]")
 
     except Exception as e:
         console.print(f"[red]Error analyzing {pdf_path.name}: {e}[/red]")

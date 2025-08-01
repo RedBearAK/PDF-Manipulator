@@ -4,18 +4,21 @@ from pypdf import PdfReader
 from pathlib import Path
 from rich.console import Console
 
+from pdf_manipulator.core.warning_suppression import suppress_pdf_warnings
+
 console = Console()
 
 
 def get_pdf_info(pdf_path: Path) -> tuple[int, float]:
     """Get page count and file size for a PDF."""
     try:
-        with open(pdf_path, 'rb') as file:
-            reader = PdfReader(file)
-            page_count = len(reader.pages)
+        with suppress_pdf_warnings():
+            with open(pdf_path, 'rb') as file:
+                reader = PdfReader(file)
+                page_count = len(reader.pages)
 
-        file_size = pdf_path.stat().st_size / (1024 * 1024)  # Convert to MB
-        return page_count, file_size
+            file_size = pdf_path.stat().st_size / (1024 * 1024)  # Convert to MB
+            return page_count, file_size
     except Exception as e:
         console.print(f"[red]Error reading {pdf_path.name}: {e}[/red]")
         return 0, 0
