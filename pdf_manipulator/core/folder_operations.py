@@ -111,7 +111,8 @@ def process_batch_extract(args: argparse.Namespace, pdf_files: list[tuple[Path, 
         console.print(f"\n[cyan]Processing {pdf_path.name}[/cyan]...")
         try:
             # Check if extraction is valid for this PDF
-            pages_to_extract, _, groups = parse_page_range(args.extract_pages, page_count)
+            # pages_to_extract, _, groups = parse_page_range(args.extract_pages, page_count)
+            pages_to_extract, _, groups = parse_page_range(args.extract_pages, page_count, pdf_path)
             
             if args.respect_groups:
                 # Extract with groupings respected
@@ -165,7 +166,8 @@ def process_interactive_extract(args: argparse.Namespace, pdf_files: list[tuple[
         console.print(f"\n[cyan]{pdf_path.name}[/cyan] - {page_count} pages, {file_size:.2f} MB")
         try:
             # Validate extraction for this PDF
-            pages_to_extract, _, groups = parse_page_range(args.extract_pages, page_count)
+            # pages_to_extract, _, groups = parse_page_range(args.extract_pages, page_count)
+            pages_to_extract, _, groups = parse_page_range(args.extract_pages, page_count, pdf_path)
 
             # Determine extraction mode
             if args.respect_groups:

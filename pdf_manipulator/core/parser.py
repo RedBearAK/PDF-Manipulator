@@ -1,6 +1,9 @@
 """Page range parsing functionality."""
 
 import re
+
+from pypdf import PdfReader
+from pathlib import Path
 from dataclasses import dataclass
 
 
@@ -11,9 +14,21 @@ class PageGroup:
     original_spec: str
 
 
-def parse_page_range(range_str: str, total_pages: int) -> tuple[set[int], str, list[PageGroup]]:
+# def parse_page_range(range_str: str, total_pages: int) -> tuple[set[int], str, list[PageGroup]]:
+#     """
+#     Parse page range string and return set of page numbers (1-indexed), description, and groupings.
+def parse_page_range(range_str: str, total_pages: int, pdf_path: Path = None) -> tuple[set[int], str, list[PageGroup]]:
     """
     Parse page range string and return set of page numbers (1-indexed), description, and groupings.
+
+    NEW: Pattern-based selection (when pdf_path provided):
+    - contains[/i]:"TEXT"       - pages containing TEXT (use quotes for literals)
+    - regex[/i]:"PATTERN"       - pages matching regex
+    - line-starts[/i]:"TEXT"    - pages with lines starting with TEXT
+    
+    With offset modifiers:
+    - contains:Chapter 1+1      - page after "Chapter 1" match
+    - contains:Summary-2        - 2 pages before "Summary" match
 
     Supports:
     - Single page: "5"
@@ -29,11 +44,28 @@ def parse_page_range(range_str: str, total_pages: int) -> tuple[set[int], str, l
     """
     pages = set()
     descriptions = []
-    groups = []  # Track the original groupings
-
+    groups = []  # Track the original groupings\
+    
     # Remove quotes and extra spaces
     range_str = range_str.strip().strip('"\'')
-
+    
+    # Check for pattern-based selection FIRST (only if pdf_path provided)
+    if pdf_path and _looks_like_pattern(range_str):
+        try:
+            matching_pages = _parse_pattern_expression(range_str, pdf_path, total_pages)
+            
+            if not matching_pages:
+                raise ValueError(f"No pages found matching pattern: {range_str}")
+            
+            pages = set(matching_pages)
+            desc = _create_pattern_description(range_str)
+            groups = [PageGroup(list(pages), True, range_str)]
+            return pages, desc, groups
+            
+        except ValueError:
+            # If pattern parsing fails, fall through to normal parsing
+            pass
+    
     # NEW: Handle "all" keyword
     if range_str.lower() == "all":
         pages = set(range(1, total_pages + 1))
@@ -161,3 +193,114 @@ def parse_page_range(range_str: str, total_pages: int) -> tuple[set[int], str, l
         desc = f"page{desc}"
 
     return pages, desc, groups
+
+
+
+def _looks_like_pattern(range_str: str) -> bool:
+    """Check if string looks like a pattern expression."""
+    return any([
+        range_str.startswith(('contains', 'regex', 'line-starts')),
+        ':' in range_str and any(range_str.lower().startswith(p) for p in ['contains', 'regex', 'line-starts']),
+    ])
+
+
+def _create_pattern_description(range_str: str) -> str:
+    """Create filename-safe description from pattern."""
+    if len(range_str) > 15:
+        return "pattern-match"
+    safe = re.sub(r'[^\w\-]', '-', range_str)
+    return safe[:15]
+
+
+def _parse_pattern_expression(expression: str, pdf_path: Path, total_pages: int) -> list[int]:
+    """Parse pattern expression and return matching page numbers."""
+    
+    # For now, implement simple single patterns only
+    # (Complex AND/OR logic can be added in Phase 3)
+    
+    return _parse_single_pattern_with_offset(expression, pdf_path, total_pages)
+
+
+def _parse_single_pattern_with_offset(pattern_str: str, pdf_path: Path, total_pages: int) -> list[int]:
+    """Parse single pattern with optional offset."""
+    
+    # Parse offset: pattern+N, pattern-N
+    offset_match = re.search(r'([+-]\d+)$', pattern_str)
+    if offset_match:
+        offset = int(offset_match.group(1))
+        base_pattern = pattern_str[:offset_match.start()]
+    else:
+        offset = 0
+        base_pattern = pattern_str
+    
+    # Get base matches
+    base_matches = _parse_base_pattern(base_pattern, pdf_path)
+    
+    # Apply offset
+    result_pages = []
+    for match_page in base_matches:
+        target_page = match_page + offset
+        if 1 <= target_page <= total_pages:
+            result_pages.append(target_page)
+    
+    return sorted(list(set(result_pages)))
+
+
+def _parse_base_pattern(pattern: str, pdf_path: Path) -> list[int]:
+    """Parse base pattern (no offsets)."""
+    
+    # Parse case sensitivity and quoted literals
+    case_sensitive = True
+    if '/i:' in pattern:
+        pattern_type, pattern_value = pattern.split('/i:', 1)
+        case_sensitive = False
+    elif ':' in pattern:
+        pattern_type, pattern_value = pattern.split(':', 1)
+    else:
+        raise ValueError(f"Invalid pattern format: {pattern}")
+    
+    # Handle quoted literals (remove quotes, no offset parsing)
+    if ((pattern_value.startswith('"') and pattern_value.endswith('"')) or
+        (pattern_value.startswith("'") and pattern_value.endswith("'"))):
+        pattern_value = pattern_value[1:-1]  # Remove quotes
+    
+    # Find matching pages
+    return _find_pages_by_pattern(pdf_path, pattern_type, pattern_value, case_sensitive)
+
+
+def _find_pages_by_pattern(pdf_path: Path, pattern_type: str, pattern_value: str, case_sensitive: bool) -> list[int]:
+    """Find pages matching a specific pattern."""
+    
+    matching_pages = []
+    
+    try:
+        reader = PdfReader(pdf_path)
+        
+        for i, page in enumerate(reader.pages):
+            page_text = page.extract_text()
+            if not case_sensitive:
+                page_text = page_text.lower()
+                search_value = pattern_value.lower()
+            else:
+                search_value = pattern_value
+            
+            matched = False
+            
+            if pattern_type == 'contains':
+                matched = search_value in page_text
+                
+            elif pattern_type == 'line-starts':
+                lines = page_text.split('\n')
+                matched = any(line.strip().startswith(search_value) for line in lines)
+                
+            elif pattern_type == 'regex':
+                flags = 0 if case_sensitive else re.IGNORECASE
+                matched = bool(re.search(pattern_value, page_text, flags))
+            
+            if matched:
+                matching_pages.append(i + 1)  # Convert to 1-indexed
+                
+    except Exception as e:
+        raise ValueError(f"Error searching for pattern: {e}")
+    
+    return matching_pages

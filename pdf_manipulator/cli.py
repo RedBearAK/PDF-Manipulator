@@ -228,6 +228,10 @@ def main():
         if not pdf_files:
             console.print("[red]Failed to read PDF file[/red]")
             sys.exit(1)
+        
+        # NEW: Check for malformation immediately after scanning
+        pdf_files = check_and_fix_malformation_early(pdf_files, args)
+        
         display_pdf_table(pdf_files, title="PDF File Assessment")
         process_single_file_operations(args, pdf_files)
     else:
@@ -236,6 +240,9 @@ def main():
         if not pdf_files:
             console.print("[yellow]No PDF files found![/yellow]")
             sys.exit(0)
+        
+        pdf_files = check_and_fix_malformation_batch(pdf_files, args)
+        
         display_pdf_table(pdf_files)
         handle_folder_operations(args, pdf_files)
 
@@ -251,7 +258,7 @@ def handle_ghostscript_operations(args: argparse.Namespace, is_file: bool, is_fo
         )
     except ImportError:
         console.print("[red]Error: Ghostscript integration not available. "
-                     "Make sure pdf_manipulator.core.ghostscript module exists.[/red]")
+                        "Make sure pdf_manipulator.core.ghostscript module exists.[/red]")
         sys.exit(1)
 
     # Check if Ghostscript is available
@@ -324,6 +331,154 @@ def handle_ghostscript_operations(args: argparse.Namespace, is_file: bool, is_fo
         except Exception as e:
             console.print(f"[red]Error during batch fix: {e}[/red]")
             sys.exit(1)
+
+
+def check_and_fix_malformation_early(pdf_files: list[tuple[Path, int, float]], args) -> list[tuple[Path, int, float]]:
+    """Check for malformed PDFs and offer fixes before showing analysis."""
+    pdf_path, page_count, file_size = pdf_files[0]
+    
+    # Early return if we don't need to check
+    if not any([args.extract_pages, args.split_pages, args.analyze]):
+        return pdf_files
+    
+    # Try to detect malformation, return original files if we can't
+    try:
+        from pdf_manipulator.core.ghostscript import detect_malformed_pdf, check_ghostscript_availability, fix_malformed_pdf
+    except ImportError:
+        return pdf_files
+    
+    try:
+        is_malformed, description = detect_malformed_pdf(pdf_path)
+    except Exception:
+        return pdf_files
+    
+    # Early return if not malformed
+    if not is_malformed:
+        return pdf_files
+    
+    # Show malformation warning
+    _show_malformation_warning(description, args)
+    
+    # Early return if Ghostscript not available
+    if not check_ghostscript_availability():
+        console.print("[yellow]Ghostscript not available for fixing[/yellow]")
+        console.print("[dim]Install with: brew install ghostscript[/dim]")
+        return pdf_files
+    
+    # Early return for batch mode
+    if args.batch:
+        console.print("[yellow]Batch mode: continuing with original PDF[/yellow]")
+        return pdf_files
+    
+    # Ask user if they want to fix
+    from rich.prompt import Confirm
+    if not Confirm.ask("Fix with Ghostscript before proceeding? (Recommended)", default=True):
+        console.print("[yellow]Continuing with original PDF (pages may be larger than necessary)[/yellow]")
+        return pdf_files
+    
+    # Try to fix the PDF
+    fixed_files = _attempt_pdf_fix(pdf_path, pdf_files)
+    return fixed_files
+
+
+def _show_malformation_warning(description: str, args):
+    """Show malformation warning messages."""
+    console.print(f"\n[yellow]⚠️  Malformed PDF detected:[/yellow]")
+    console.print(f"[yellow]{description}[/yellow]")
+    
+    if args.extract_pages or args.split_pages:
+        console.print("[yellow]This will cause extracted pages to be unnecessarily large[/yellow]")
+        console.print("[dim]Example: 2.4MB per page instead of 10KB per page[/dim]")
+
+
+def _attempt_pdf_fix(pdf_path: Path, original_files: list[tuple[Path, int, float]]) -> list[tuple[Path, int, float]]:
+    """Attempt to fix PDF and get user choice on how to proceed."""
+    from pdf_manipulator.core.ghostscript import fix_malformed_pdf
+    
+    console.print("\n[blue]Fixing PDF structure with Ghostscript...[/blue]")
+    
+    try:
+        output_path, new_size = fix_malformed_pdf(pdf_path, quality="default")
+    except Exception as e:
+        console.print(f"[red]Error fixing PDF: {e}[/red]")
+        console.print("[yellow]Continuing with original PDF[/yellow]")
+        return original_files
+    
+    if not output_path or not output_path.exists():
+        console.print("[red]Failed to create fixed PDF, continuing with original[/red]")
+        return original_files
+    
+    console.print(f"[green]✓ Fixed PDF created: {output_path.name}[/green]")
+    return _get_user_choice_on_fixed_pdf(output_path, original_files)
+
+
+def _get_user_choice_on_fixed_pdf(fixed_path: Path, original_files: list[tuple[Path, int, float]]) -> list[tuple[Path, int, float]]:
+    """Get user choice on whether to use fixed or original PDF."""
+    console.print("\nChoose how to proceed:")
+    console.print("  [bold]f[/bold] - Use fixed PDF (recommended)")
+    console.print("  [bold]o[/bold] - Use original PDF anyway")  
+    console.print("  [bold]c[/bold] - Cancel operation")
+    
+    from rich.prompt import Prompt
+    choice = Prompt.ask("Your choice", choices=["f", "o", "c"], default="f")
+    
+    if choice == "f":
+        return _use_fixed_pdf(fixed_path)
+    elif choice == "o":
+        console.print("[yellow]Continuing with original PDF (pages may be larger than necessary)[/yellow]")
+        return original_files
+    else:  # choice == "c"
+        console.print("[blue]Operation cancelled[/blue]")
+        sys.exit(0)
+
+
+def _use_fixed_pdf(fixed_path: Path) -> list[tuple[Path, int, float]]:
+    """Update file list to use the fixed PDF."""
+    from pdf_manipulator.core.scanner import get_pdf_info
+    
+    new_page_count, new_file_size = get_pdf_info(fixed_path)
+    console.print("[green]✓ Using fixed PDF for processing[/green]")
+    return [(fixed_path, new_page_count, new_file_size)]
+
+
+def check_and_fix_malformation_batch(pdf_files: list[tuple[Path, int, float]], args) -> list[tuple[Path, int, float]]:
+    """Check for malformed PDFs in batch mode - just warn, don't fix."""
+    
+    # Early return if we don't need to check
+    if not any([args.extract_pages, args.split_pages, args.analyze]):
+        return pdf_files
+    
+    try:
+        from pdf_manipulator.core.ghostscript import detect_malformed_pdf
+    except ImportError:
+        return pdf_files
+    
+    # Find malformed files
+    malformed_files = []
+    for pdf_path, page_count, file_size in pdf_files:
+        try:
+            is_malformed, description = detect_malformed_pdf(pdf_path)
+            if is_malformed:
+                malformed_files.append((pdf_path, description))
+        except Exception:
+            continue
+    
+    if not malformed_files:
+        return pdf_files
+    
+    # Show warning about malformed files
+    console.print(f"\n[yellow]⚠️  Found {len(malformed_files)} malformed PDFs:[/yellow]")
+    for pdf_path, desc in malformed_files[:3]:  # Show first 3
+        console.print(f"  • {pdf_path.name}: {desc}")
+    if len(malformed_files) > 3:
+        console.print(f"  ... and {len(malformed_files) - 3} more")
+    
+    if args.extract_pages or args.split_pages:
+        console.print("[yellow]These will produce unnecessarily large extracted pages[/yellow]")
+        console.print("[yellow]Consider using --gs-batch-fix first, or process files individually[/yellow]")
+        console.print("[dim]Continuing with malformed files...[/dim]")
+    
+    return pdf_files
 
 
 if __name__ == "__main__":

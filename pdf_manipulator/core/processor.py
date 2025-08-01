@@ -1,13 +1,14 @@
 """High-level processing coordination."""
 
 import argparse
-from pathlib import Path
-from rich.console import Console
-from rich.prompt import Confirm
 
-from pdf_manipulator.core.operations import *
-from pdf_manipulator.core.scanner import *
+from pathlib import Path
+from rich.prompt import Confirm
+from rich.console import Console
+
 from pdf_manipulator.ui import *
+from pdf_manipulator.core.scanner import *
+from pdf_manipulator.core.operations import *
 
 console = Console()
 
@@ -72,7 +73,8 @@ def process_single_pdf(pdf_path: Path, page_count: int, file_size: float,
     elif args.extract_pages:
         # Validate that extraction makes sense for this PDF
         try:
-            pages_to_extract, _, groups = parse_page_range(args.extract_pages, page_count)
+            # pages_to_extract, _, groups = parse_page_range(args.extract_pages, page_count)
+            pages_to_extract, _, groups = parse_page_range(args.extract_pages, page_count, pdf_path)
             if len(pages_to_extract) == page_count:
                 console.print("[yellow]Extracting all pages - consider using --optimize instead[/yellow]")
 
