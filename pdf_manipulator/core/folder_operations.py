@@ -5,6 +5,8 @@ from rich.console import Console
 from rich.prompt import Confirm
 
 from pdf_manipulator.ui import decide_extraction_mode, show_folder_help
+from pdf_manipulator.core.parser import parse_page_range
+from pdf_manipulator.core.processor import process_multipage_pdfs
 from pdf_manipulator.core.operations import (
     analyze_pdf,
     optimize_pdf,
@@ -13,8 +15,7 @@ from pdf_manipulator.core.operations import (
     extract_pages_separate,
     split_to_pages,
 )
-from pdf_manipulator.core.parser import parse_page_range
-from pdf_manipulator.core.processor import process_multipage_pdfs
+from pdf_manipulator.core.malformation_checker import check_and_fix_malformation_for_extraction
 
 
 console = Console()
@@ -164,6 +165,14 @@ def process_interactive_extract(args: argparse.Namespace, pdf_files: list[tuple[
     # For extract, ask about each PDF
     for pdf_path, page_count, file_size in pdf_files:
         console.print(f"\n[cyan]{pdf_path.name}[/cyan] - {page_count} pages, {file_size:.2f} MB")
+
+        # NEW: Check for malformation on individual file
+        pdf_files_single = [(pdf_path, page_count, file_size)]
+        fixed_files = check_and_fix_malformation_for_extraction(pdf_files_single, args)
+        
+        # Use the potentially fixed file info
+        pdf_path, page_count, file_size = fixed_files[0]
+        
         try:
             # Validate extraction for this PDF
             # pages_to_extract, _, groups = parse_page_range(args.extract_pages, page_count)

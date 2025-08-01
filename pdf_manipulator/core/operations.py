@@ -5,11 +5,26 @@ import argparse
 
 from pypdf import PdfReader, PdfWriter
 from pathlib import Path
+from contextlib import contextmanager
 from rich.console import Console
 from pdf_manipulator.core.parser import parse_page_range
 
 
 console = Console()
+
+
+class PDFManipulatorError(Exception):
+    """Base exception for PDF Manipulator operations."""
+    pass
+
+class MalformedPDFError(PDFManipulatorError):
+    """Exception for malformed PDF handling."""
+    pass
+
+class ExtractionError(PDFManipulatorError):
+    """Exception for page extraction errors."""
+    pass
+
 
 
 def _get_unique_filename(base_path: Path) -> Path:
