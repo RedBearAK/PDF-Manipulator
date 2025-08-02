@@ -11,6 +11,8 @@ from pathlib import Path
 from rich.console import Console
 from rich.prompt import Confirm, Prompt
 
+from pdf_manipulator.core.warning_suppression import suppress_pdf_warnings
+
 
 console = Console()
 
@@ -146,7 +148,7 @@ def check_and_fix_malformation_for_extraction(pdf_files: list[tuple[Path, int, f
         return pdf_files
     
     # Try to fix the PDF
-    return _attempt_individual_pdf_fix(pdf_path, pdf_files)
+    return _attempt_individual_pdf_fix(pdf_path, pdf_files, batch_mode=args.batch)
 
 
 def _show_malformation_warning(description: str, args):
@@ -170,7 +172,8 @@ def _attempt_pdf_fix(pdf_path: Path, original_files: list[tuple[Path, int, float
     console.print("\n[blue]Fixing PDF structure with Ghostscript...[/blue]")
     
     try:
-        output_path, new_size = fix_malformed_pdf(pdf_path, quality="default")
+        with suppress_pdf_warnings():
+            output_path, new_size = fix_malformed_pdf(pdf_path, quality="default")
     except Exception as e:
         console.print(f"[red]Error fixing PDF: {e}[/red]")
         console.print("[yellow]Continuing with original PDF[/yellow]")
@@ -184,22 +187,49 @@ def _attempt_pdf_fix(pdf_path: Path, original_files: list[tuple[Path, int, float
     return _get_user_choice_on_fixed_pdf(output_path, original_files)
 
 
-def _attempt_individual_pdf_fix(pdf_path: Path, original_files: list[tuple[Path, int, float]]) -> list[tuple[Path, int, float]]:
+def _attempt_individual_pdf_fix(pdf_path: Path, original_files: list[tuple[Path, int, float]], 
+                                    batch_mode: bool = False) -> list[tuple[Path, int, float]]:
     """Fix individual PDF during processing."""
     from pdf_manipulator.core.ghostscript import fix_malformed_pdf
+    from pdf_manipulator.core.warning_suppression import suppress_pdf_warnings
+    from rich.prompt import Confirm
     
     console.print(f"\n[blue]Fixing {pdf_path.name} with Ghostscript...[/blue]")
     
     try:
-        output_path, new_size = fix_malformed_pdf(pdf_path, quality="default")
+        with suppress_pdf_warnings():
+            output_path, new_size = fix_malformed_pdf(pdf_path, quality="default")
     except Exception as e:
         console.print(f"[red]Error fixing PDF: {e}[/red]")
-        console.print("[yellow]Continuing with original PDF[/yellow]")
-        return original_files
+        
+        # In interactive mode, ask user what to do
+        # In batch mode, just continue with original
+        if batch_mode:
+            console.print("[yellow]Batch mode: continuing with original PDF[/yellow]")
+            return original_files
+        else:
+            if Confirm.ask("Continue with original malformed PDF anyway?", default=True):
+                console.print("[yellow]Continuing with original PDF (results may be suboptimal)[/yellow]")
+                return original_files
+            else:
+                console.print("[blue]Skipping this file[/blue]")
+                return []  # Return empty list to skip this file
     
+    # Verify the output file actually exists
     if not output_path or not output_path.exists():
-        console.print("[red]Failed to create fixed PDF, continuing with original[/red]")
-        return original_files
+        console.print("[red]Fixed PDF was not created successfully[/red]")
+        
+        # Same interactive vs batch handling
+        if batch_mode:
+            console.print("[yellow]Batch mode: continuing with original PDF[/yellow]")
+            return original_files
+        else:
+            if Confirm.ask("Continue with original malformed PDF anyway?", default=True):
+                console.print("[yellow]Continuing with original PDF (results may be suboptimal)[/yellow]")
+                return original_files
+            else:
+                console.print("[blue]Skipping this file[/blue]")
+                return []
     
     console.print(f"[green]✓ Fixed PDF created: {output_path.name}[/green]")
     

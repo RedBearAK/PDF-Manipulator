@@ -2,7 +2,12 @@ import re
 
 from pypdf import PdfReader
 from pathlib import Path
+from rich.console import Console
 
+from pdf_manipulator.core.warning_suppression import suppress_pdf_warnings
+
+
+console = Console()
 
 #################################################################################################
 # Public API functions
@@ -13,6 +18,23 @@ def looks_like_pattern(range_str: str) -> bool:
         range_str.startswith(('contains', 'regex', 'line-starts')),
         ':' in range_str and any(range_str.lower().startswith(p) for p in ['contains', 'regex', 'line-starts']),
     ])
+
+
+# def looks_like_pattern(range_str: str) -> bool:
+#     """Check if string looks like a pattern expression."""
+    
+#     console.print(f"[dim]LOOKS_LIKE DEBUG: Testing '{range_str}'[/dim]")
+    
+#     condition1 = range_str.startswith(('contains', 'regex', 'line-starts'))
+#     condition2 = ':' in range_str and any(range_str.lower().startswith(p) for p in ['contains', 'regex', 'line-starts'])
+    
+#     console.print(f"[dim]LOOKS_LIKE DEBUG: condition1 (starts with): {condition1}[/dim]")
+#     console.print(f"[dim]LOOKS_LIKE DEBUG: condition2 (colon + starts): {condition2}[/dim]")
+    
+#     result = any([condition1, condition2])
+#     console.print(f"[dim]LOOKS_LIKE DEBUG: final result: {result}[/dim]")
+    
+#     return result
 
 
 def looks_like_range_pattern(range_str: str) -> bool:
@@ -141,32 +163,33 @@ def _find_pages_by_pattern(pdf_path: Path, pattern_type: str, pattern_value: str
     matching_pages = []
     
     try:
-        reader = PdfReader(pdf_path)
-        
-        for i, page in enumerate(reader.pages):
-            page_text = page.extract_text()
-            if not case_sensitive:
-                page_text = page_text.lower()
-                search_value = pattern_value.lower()
-            else:
-                search_value = pattern_value
+        with suppress_pdf_warnings():
+            reader = PdfReader(pdf_path)
             
-            matched = False
-            
-            if pattern_type == 'contains':
-                matched = search_value in page_text
+            for i, page in enumerate(reader.pages):
+                page_text = page.extract_text()
+                if not case_sensitive:
+                    page_text = page_text.lower()
+                    search_value = pattern_value.lower()
+                else:
+                    search_value = pattern_value
                 
-            elif pattern_type == 'line-starts':
-                lines = page_text.split('\n')
-                matched = any(line.strip().startswith(search_value) for line in lines)
+                matched = False
                 
-            elif pattern_type == 'regex':
-                flags = 0 if case_sensitive else re.IGNORECASE
-                matched = bool(re.search(pattern_value, page_text, flags))
-            
-            if matched:
-                matching_pages.append(i + 1)  # Convert to 1-indexed
+                if pattern_type == 'contains':
+                    matched = search_value in page_text
+                    
+                elif pattern_type == 'line-starts':
+                    lines = page_text.split('\n')
+                    matched = any(line.strip().startswith(search_value) for line in lines)
+                    
+                elif pattern_type == 'regex':
+                    flags = 0 if case_sensitive else re.IGNORECASE
+                    matched = bool(re.search(pattern_value, page_text, flags))
                 
+                if matched:
+                    matching_pages.append(i + 1)  # Convert to 1-indexed
+                    
     except Exception as e:
         raise ValueError(f"Error searching for pattern: {e}")
     

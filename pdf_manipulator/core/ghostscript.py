@@ -6,12 +6,17 @@ Add this as pdf_manipulator/core/ghostscript.py
 import io
 import sys
 import shutil
+import hashlib
+import tempfile
 import subprocess
 
 from typing import Optional, Tuple, List
 from pathlib import Path
 from contextlib import redirect_stderr
 from rich.console import Console
+
+from pdf_manipulator.core.warning_suppression import suppress_pdf_warnings
+
 
 console = Console()
 
@@ -142,68 +147,95 @@ def run_ghostscript_command(args: List[str], timeout: int = 60) -> subprocess.Co
 
 
 def fix_malformed_pdf(input_path: Path, quality: str = "default") -> Tuple[Path, float]:
-    """
-    Fix malformed PDF using Ghostscript to deduplicate resources.
-    
-    Args:
-        input_path: Path to input PDF
-        quality: Quality setting ('screen', 'ebook', 'printer', 'prepress', 'default')
-        
-    Returns:
-        Tuple of (output_path, new_size_mb)
-        
-    Raises:
-        GhostscriptError: If processing fails
-    """
-    output_path = input_path.parent / f"{input_path.stem}_gs_fixed.pdf"
-    
-    # Ensure unique filename
-    counter = 1
-    while output_path.exists():
-        output_path = input_path.parent / f"{input_path.stem}_gs_fixed_{counter:02d}.pdf"
-        counter += 1
-    
-    args = [
-        "-sDEVICE=pdfwrite",
-        f"-dCompatibilityLevel=1.4",
-        f"-dPDFSETTINGS=/{quality}",
-        "-dNOPAUSE",
-        "-dQUIET",
-        "-dBATCH",
-        f"-sOutputFile={output_path}",
-        str(input_path)
-    ]
-    
+    """Fix with content-only hash comparison."""
     console.print(f"[blue]Fixing malformed PDF with Ghostscript...[/blue]")
     console.print(f"[dim]Quality: {quality}[/dim]")
     
-    try:
-        result = run_ghostscript_command(args)
+    # Create in temp directory first
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir) / f"{input_path.stem}_gs_fixed.pdf"
         
-        if output_path.exists():
-            new_size = output_path.stat().st_size / (1024 * 1024)
+        args = [
+            "-sDEVICE=pdfwrite",
+            f"-dCompatibilityLevel=1.4",
+            f"-dPDFSETTINGS=/{quality}",
+            "-dNOPAUSE",
+            "-dQUIET",
+            "-dBATCH",
+            # Try to make output more deterministic (may not work completely)
+            "-dCreationDate=(D:20240101000000Z)",
+            "-dModDate=(D:20240101000000Z)", 
+            "-dProducer=(pdf-manipulator)",
+            f"-sOutputFile={temp_path}",
+            str(input_path)
+        ]
+        
+        try:
+            result = run_ghostscript_command(args)
+            
+            if not temp_path.exists():
+                raise GhostscriptError("Output file was not created")
+            
+            # Get properties of the temp file
+            temp_size_bytes = temp_path.stat().st_size
+            temp_size_mb = temp_size_bytes / (1024 * 1024)
+            temp_content_hash = _get_content_hash(temp_path)
+            
+            # console.print(f"[dim]DEBUG: New temp file - Size: {temp_size_bytes}, Content Hash: {temp_content_hash[:10]}...[/dim]")
+            
+            # Check canonical fixed filename for identical content
+            canonical_fixed_path = input_path.parent / f"{input_path.stem}_gs_fixed.pdf"
+            
+            if canonical_fixed_path.exists():
+                existing_size = canonical_fixed_path.stat().st_size
+                existing_content_hash = _get_content_hash(canonical_fixed_path)
+                
+                # console.print(f"[dim]DEBUG: Existing file - Size: {existing_size}, Content Hash: {existing_content_hash[:10]}...[/dim]")
+                # console.print(f"[dim]DEBUG: Size match: {existing_size == temp_size_bytes}[/dim]")
+                # console.print(f"[dim]DEBUG: Content hash match: {existing_content_hash == temp_content_hash}[/dim]")
+                
+                if existing_content_hash == temp_content_hash:
+                    # Content match - reuse existing file
+                    console.print(f"[green]✓ Using existing repair (identical content): {canonical_fixed_path.name}[/green]")
+                    console.print(f"[dim]Content hash matched (ignoring metadata differences)[/dim]")
+                    return canonical_fixed_path, canonical_fixed_path.stat().st_size / (1024 * 1024)
+                # else:
+                #     if existing_size == temp_size_bytes:
+                #         console.print(f"[yellow]DEBUG: Same size but different content - this is unexpected[/yellow]")
+                #     else:
+                #         size_diff = abs(existing_size - temp_size_bytes)
+                #         console.print(f"[yellow]DEBUG: Different content and size - diff: {size_diff} bytes[/yellow]")
+            
+            # Determine output location
+            if canonical_fixed_path.exists():
+                # Canonical name exists but content differs - use unique name  
+                final_output_path = _get_unique_output_path(input_path)
+                console.print(f"[yellow]Note: Canonical fix exists but differs, creating: {final_output_path.name}[/yellow]")
+            else:
+                # Canonical name available - use it
+                final_output_path = canonical_fixed_path
+            
+            # Move temp file to final location
+            shutil.move(str(temp_path), str(final_output_path))
+            
+            # Success reporting
             original_size = input_path.stat().st_size / (1024 * 1024)
             
-            console.print(f"[green]✓ Fixed PDF: {output_path.name}[/green]")
+            console.print(f"[green]✓ Fixed PDF: {final_output_path.name}[/green]")
             console.print(f"[green]  Original: {original_size:.2f} MB[/green]")
-            console.print(f"[green]  Fixed:    {new_size:.2f} MB[/green]")
+            console.print(f"[green]  Fixed:    {temp_size_mb:.2f} MB[/green]")
             
             if original_size > 0:
-                savings = ((original_size - new_size) / original_size) * 100
+                savings = ((original_size - temp_size_mb) / original_size) * 100
                 if savings > 0:
                     console.print(f"[green]  Savings:  {savings:.1f}%[/green]")
                 else:
                     console.print(f"[yellow]  Size change: {abs(savings):.1f}% larger[/yellow]")
             
-            return output_path, new_size
-        else:
-            raise GhostscriptError("Output file was not created")
+            return final_output_path, temp_size_mb
             
-    except GhostscriptError:
-        # Clean up partial file if it exists
-        if output_path.exists():
-            output_path.unlink()
-        raise
+        except GhostscriptError:
+            raise
 
 
 def compress_pdf(input_path: Path, quality: str = "ebook") -> Tuple[Path, float]:
@@ -217,49 +249,81 @@ def compress_pdf(input_path: Path, quality: str = "ebook") -> Tuple[Path, float]
     Returns:
         Tuple of (output_path, new_size_mb)
     """
-    output_path = input_path.parent / f"{input_path.stem}_gs_compressed.pdf"
-    
-    # Ensure unique filename
-    counter = 1
-    while output_path.exists():
-        output_path = input_path.parent / f"{input_path.stem}_gs_compressed_{counter:02d}.pdf"
-        counter += 1
-    
-    args = [
-        "-sDEVICE=pdfwrite",
-        f"-dCompatibilityLevel=1.4",
-        f"-dPDFSETTINGS=/{quality}",
-        "-dNOPAUSE",
-        "-dQUIET",
-        "-dBATCH",
-        "-dCompressFonts=true",
-        "-dSubsetFonts=true",
-        "-dCompressPages=true",
-        "-dEmbedAllFonts=true",
-        f"-sOutputFile={output_path}",
-        str(input_path)
-    ]
-    
     console.print(f"[blue]Compressing PDF with Ghostscript...[/blue]")
     console.print(f"[dim]Quality: {quality}[/dim]")
     
-    result = run_ghostscript_command(args)
-    
-    if output_path.exists():
-        new_size = output_path.stat().st_size / (1024 * 1024)
+    # Create in temp directory first
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir) / f"{input_path.stem}_gs_compressed.pdf"
+        
+        args = [
+            "-sDEVICE=pdfwrite",
+            f"-dCompatibilityLevel=1.4",
+            f"-dPDFSETTINGS=/{quality}",
+            "-dNOPAUSE",
+            "-dQUIET",
+            "-dBATCH",
+            "-dCompressFonts=true",
+            "-dSubsetFonts=true",
+            "-dCompressPages=true",
+            "-dEmbedAllFonts=true",
+            f"-sOutputFile={temp_path}",
+            str(input_path)
+        ]
+        
+        result = run_ghostscript_command(args)
+        
+        if not temp_path.exists():
+            raise GhostscriptError("Output file was not created")
+        
+        # Get properties of the temp file
+        temp_size_bytes = temp_path.stat().st_size
+        temp_size_mb = temp_size_bytes / (1024 * 1024)
+        temp_hash = _get_file_hash(temp_path)
+        
+        # For compression, use a different pattern to avoid conflicts with fix operations
+        pattern = f"{input_path.stem}_gs_compressed*.pdf"
+        existing_match = None
+        
+        try:
+            for existing_file in input_path.parent.glob(pattern):
+                if (existing_file.exists() and 
+                    existing_file.stat().st_size == temp_size_bytes and
+                    _get_file_hash(existing_file) == temp_hash):
+                    existing_match = existing_file
+                    break
+        except Exception:
+            pass
+        
+        if existing_match:
+            console.print(f"[green]✓ Using existing identical compression: {existing_match.name}[/green]")
+            console.print(f"[dim]Avoided creating duplicate compressed file[/dim]")
+            return existing_match, existing_match.stat().st_size / (1024 * 1024)
+        
+        # No duplicate found, move temp file to target location
+        base_output_path = input_path.parent / f"{input_path.stem}_gs_compressed.pdf"
+        final_output_path = base_output_path
+        
+        # Handle existing files
+        counter = 1
+        while final_output_path.exists():
+            final_output_path = input_path.parent / f"{input_path.stem}_gs_compressed_{counter:02d}.pdf"
+            counter += 1
+        
+        shutil.move(str(temp_path), str(final_output_path))
+        
+        # Success reporting
         original_size = input_path.stat().st_size / (1024 * 1024)
         
-        console.print(f"[green]✓ Compressed PDF: {output_path.name}[/green]")
+        console.print(f"[green]✓ Compressed PDF: {final_output_path.name}[/green]")
         console.print(f"[green]  Original: {original_size:.2f} MB[/green]")
-        console.print(f"[green]  Compressed: {new_size:.2f} MB[/green]")
+        console.print(f"[green]  Compressed: {temp_size_mb:.2f} MB[/green]")
         
         if original_size > 0:
-            savings = ((original_size - new_size) / original_size) * 100
+            savings = ((original_size - temp_size_mb) / original_size) * 100
             console.print(f"[green]  Savings: {savings:.1f}%[/green]")
         
-        return output_path, new_size
-    else:
-        raise GhostscriptError("Output file was not created")
+        return final_output_path, temp_size_mb
 
 
 def detect_pdf_structural_issues(pdf_path: Path) -> tuple[bool, str]:
@@ -271,11 +335,10 @@ def detect_pdf_structural_issues(pdf_path: Path) -> tuple[bool, str]:
     """
     try:
         from pypdf import PdfReader
+        from pdf_manipulator.core.warning_suppression import suppress_pdf_warnings
         
-        # Capture stderr to catch PyPDF warnings
-        stderr_capture = io.StringIO()
-        
-        with redirect_stderr(stderr_capture):
+        # Use our warning suppression system to capture structured warning data
+        with suppress_pdf_warnings() as warning_filter:
             reader = PdfReader(pdf_path)
             # Try to access pages to trigger warnings
             total_pages = len(reader.pages)
@@ -290,15 +353,21 @@ def detect_pdf_structural_issues(pdf_path: Path) -> tuple[bool, str]:
                 except Exception:
                     pass  # Ignore extraction errors, we just want to trigger warnings
         
-        # Check what warnings were captured
-        warnings_output = stderr_capture.getvalue()
-        
-        if "wrong pointing object" in warnings_output:
-            wrong_objects = warnings_output.count("wrong pointing object")
-            return True, f"Structural corruption: {wrong_objects} invalid object references"
-        
-        if "Ignoring" in warnings_output and len(warnings_output) > 100:
-            return True, "Multiple PDF structure warnings detected"
+        # Check what warnings were captured using structured data
+        if warning_filter and warning_filter.suppressed_count > 0:
+            # Check for "wrong pointing object" specifically
+            wrong_objects = warning_filter.suppressed_types.get("wrong pointing object", 0)
+            if wrong_objects > 0:
+                return True, f"Structural corruption: {wrong_objects} invalid object references"
+            
+            # Check for other structural issues patterns
+            ignoring_count = warning_filter.suppressed_types.get("Ignoring wrong pointing object", 0)
+            if ignoring_count > 0:
+                return True, f"Structural corruption: {ignoring_count} invalid object references"
+            
+            # Check for multiple warnings indicating structural problems
+            if warning_filter.suppressed_count > 5:
+                return True, f"Multiple PDF structure warnings detected ({warning_filter.suppressed_count} warnings)"
         
         return False, "No structural issues detected"
         
@@ -352,87 +421,6 @@ def detect_malformed_pdf(pdf_path: Path) -> tuple[bool, str]:
         return True, "; ".join(issues)
     else:
         return False, "No issues detected"
-
-
-# def check_and_fix_malformation_for_extraction(pdf_files: list[tuple[Path, int, float]], args) -> list[tuple[Path, int, float]]:
-#     """Check for malformation during extraction and offer to fix individual files."""
-    
-#     # Only check the first file (for individual processing)
-#     pdf_path, page_count, file_size = pdf_files[0]
-    
-#     # Early return if we don't need to check
-#     if not any([args.extract_pages, args.split_pages]):
-#         return pdf_files
-    
-#     # Try to detect malformation
-#     try:
-#         is_malformed, description = detect_malformed_pdf(pdf_path)
-#     except Exception:
-#         return pdf_files
-    
-#     # Early return if not malformed
-#     if not is_malformed:
-#         return pdf_files
-    
-#     # Show malformation warning for this specific file
-#     console.print(f"\n[yellow]⚠️  {pdf_path.name} has issues:[/yellow]")
-#     console.print(f"[yellow]{description}[/yellow]")
-    
-#     if "Structural corruption" in description:
-#         console.print("[yellow]This may cause processing errors or unexpected results[/yellow]")
-#     elif "Resource duplication" in description:
-#         console.print("[yellow]Extracted pages will be unnecessarily large[/yellow]")
-    
-#     # Early return if Ghostscript not available
-#     if not check_ghostscript_availability():
-#         console.print("[yellow]Ghostscript not available for fixing[/yellow]")
-#         console.print("[dim]Install with: brew install ghostscript (macOS) or apt install ghostscript (Ubuntu)[/dim]")
-        
-#         from rich.prompt import Confirm
-#         if not Confirm.ask("Continue with malformed PDF anyway?", default=True):
-#             console.print("[blue]Skipping this file[/blue]")
-#             return []  # Return empty list to skip this file
-#         return pdf_files
-    
-#     # Early return for batch mode
-#     if args.batch:
-#         console.print("[yellow]Batch mode: continuing with malformed PDF[/yellow]")
-#         return pdf_files
-    
-#     # Ask user if they want to fix
-#     from rich.prompt import Confirm
-#     if not Confirm.ask("Fix with Ghostscript before processing?", default=True):
-#         console.print("[yellow]Continuing with malformed PDF (results may be suboptimal)[/yellow]")
-#         return pdf_files
-    
-#     # Try to fix the PDF
-#     return _attempt_individual_pdf_fix(pdf_path, pdf_files)
-
-
-# def _attempt_individual_pdf_fix(pdf_path: Path, original_files: list[tuple[Path, int, float]]) -> list[tuple[Path, int, float]]:
-#     """Fix individual PDF during processing."""
-    
-#     console.print(f"\n[blue]Fixing {pdf_path.name} with Ghostscript...[/blue]")
-    
-#     try:
-#         output_path, new_size = fix_malformed_pdf(pdf_path, quality="default")
-#     except Exception as e:
-#         console.print(f"[red]Error fixing PDF: {e}[/red]")
-#         console.print("[yellow]Continuing with original PDF[/yellow]")
-#         return original_files
-    
-#     if not output_path or not output_path.exists():
-#         console.print("[red]Failed to create fixed PDF, continuing with original[/red]")
-#         return original_files
-    
-#     console.print(f"[green]✓ Fixed PDF created: {output_path.name}[/green]")
-    
-#     # Update file info to use the fixed PDF
-#     from pdf_manipulator.core.scanner import get_pdf_info
-#     new_page_count, new_file_size = get_pdf_info(output_path)
-#     console.print("[green]✓ Using fixed PDF for processing[/green]")
-    
-#     return [(output_path, new_page_count, new_file_size)]
 
 
 def safe_batch_fix_pdfs(folder_path: Path, recursive: bool = False, 
@@ -564,21 +552,63 @@ def repair_pdf(input_path: Path) -> Tuple[Path, float]:
     return fix_malformed_pdf(input_path, quality="default")
 
 
-# CLI integration suggestions:
-"""
-Add these to cli.py:
+def _get_unique_output_path(input_path: Path) -> Path:
+    """Get unique output path for cases where canonical name conflicts."""
+    counter = 1
+    while True:
+        numbered_path = input_path.parent / f"{input_path.stem}_gs_fixed_{counter:02d}.pdf"
+        if not numbered_path.exists():
+            return numbered_path
+        counter += 1
 
-# Ghostscript operations
-operations.add_argument('--gs-fix', action='store_true',
-    help='Fix malformed PDFs using Ghostscript (deduplicates resources)')
-operations.add_argument('--gs-batch-fix', action='store_true',
-    help='Fix all malformed PDFs in folder using Ghostscript')
-operations.add_argument('--gs-quality', choices=['screen', 'ebook', 'printer', 'prepress', 'default'],
-    default='default', help='Ghostscript quality setting')
-operations.add_argument('--recursive', action='store_true',
-    help='Process subdirectories recursively')
-operations.add_argument('--dry-run', action='store_true',
-    help='Show what would be done without actually doing it')
-operations.add_argument('--replace-originals', action='store_true',
-    help='Replace original files with fixed versions (CAREFUL!)')
-"""
+
+def _get_file_hash(file_path: Path, chunk_size: int = 8192) -> str:
+    """Get SHA256 hash of file with error handling."""
+    try:
+        hash_sha256 = hashlib.sha256()
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(chunk_size), b""):
+                hash_sha256.update(chunk)
+        return hash_sha256.hexdigest()
+    except (OSError, PermissionError):
+        return ""
+
+
+def _get_content_hash(file_path: Path) -> str:
+    """Get hash of PDF content without metadata."""
+    from pdf_manipulator.core.warning_suppression import suppress_pdf_warnings
+    
+    try:
+        from pypdf import PdfReader
+        
+        with suppress_pdf_warnings():
+            reader = PdfReader(file_path)
+            content_parts = []
+            
+            # Hash just the page content streams (not metadata)
+            for i, page in enumerate(reader.pages):
+                try:
+                    # Get page content
+                    if hasattr(page, 'get_contents'):
+                        content = page.get_contents()
+                        if content:
+                            content_parts.append(content.get_data())
+                    
+                    # Also include page dimensions for structural comparison
+                    if hasattr(page, 'mediabox'):
+                        media_box = str(page.mediabox).encode('utf-8')
+                        content_parts.append(media_box)
+                        
+                except Exception:
+                    # If we can't extract content from a page, use page number as fallback
+                    content_parts.append(f"page_{i}".encode('utf-8'))
+            
+            # Combine all page contents and hash
+            combined_content = b''.join(content_parts)
+            return hashlib.sha256(combined_content).hexdigest()
+        
+    except Exception as e:
+        console.print(f"[dim]Content hash failed ({e}), using file hash[/dim]")
+        # Fallback to file hash if content extraction fails
+        return _get_file_hash(file_path)
+

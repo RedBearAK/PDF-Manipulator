@@ -1,3 +1,3 @@
 # Version info for PDF-Manipulator project
-__version__ = "20250731.0"
+__version__ = "20250801.0"
 

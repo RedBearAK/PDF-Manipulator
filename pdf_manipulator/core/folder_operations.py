@@ -173,6 +173,10 @@ def process_interactive_extract(args: argparse.Namespace, pdf_files: list[tuple[
         pdf_files_single = [(pdf_path, page_count, file_size)]
         fixed_files = check_and_fix_malformation_for_extraction(pdf_files_single, args)
         
+        if not fixed_files:
+            console.print("[yellow]Skipping this PDF as requested[/yellow]")
+            continue  # Skip to next PDF in the loop
+        
         # Use the potentially fixed file info
         pdf_path, page_count, file_size = fixed_files[0]
         
@@ -180,7 +184,7 @@ def process_interactive_extract(args: argparse.Namespace, pdf_files: list[tuple[
             # Validate extraction for this PDF
             # pages_to_extract, _, groups = parse_page_range(args.extract_pages, page_count)
             pages_to_extract, _, groups = parse_page_range(args.extract_pages, page_count, pdf_path)
-
+            
             # Determine extraction mode
             if args.respect_groups:
                 extraction_mode = 'grouped'

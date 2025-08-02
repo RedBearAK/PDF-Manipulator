@@ -1,6 +1,7 @@
 import re
 
 from pathlib import Path
+from rich.console import Console
 from dataclasses import dataclass
 
 from pdf_manipulator.core.page_range.utils import (
@@ -17,6 +18,8 @@ from pdf_manipulator.core.page_range.boolean import (
     looks_like_boolean_expression,
     parse_boolean_expression
 )
+
+console = Console()
 
 @dataclass
 class PageGroup:
@@ -37,9 +40,18 @@ class PageRangeParser:
     
     def parse(self, range_str: str) -> tuple[set[int], str, list[PageGroup]]:
         """Main entry point for parsing page ranges."""
+
+        # console.print(f"[dim]PARSE DEBUG: Input='{range_str}', pdf_path={self.pdf_path is not None}[/dim]")
+
         # Clean input
-        range_str = range_str.strip().strip('"\'')
-        
+        # range_str = range_str.strip().strip('"\'')
+        # Fix for incorrectly stripping a single quote symbol by itself
+        if ((range_str.startswith('"') and range_str.endswith('"')) or
+            (range_str.startswith("'") and range_str.endswith("'"))):
+            range_str = range_str[1:-1]  # Only removes MATCHING pairs
+
+        # console.print(f"[dim]PARSE DEBUG: After cleaning='{range_str}'[/dim]")
+
         # Try advanced patterns first (if PDF available)
         if self.pdf_path:
             result = self._try_advanced_patterns(range_str)
@@ -249,15 +261,26 @@ class PageRangeParser:
         
         # Single patterns: "contains:'text'"
         if looks_like_pattern(range_str):
+            # console.print(f"[dim]PATTERN DEBUG: Recognized as single pattern, searching...[/dim]")  # ← ADD THIS
             try:
                 matching_pages = parse_pattern_expression(range_str, self.pdf_path, self.total_pages)
+                # console.print(f"[dim]PATTERN DEBUG: Found {len(matching_pages)} matching pages[/dim]")  # ← ADD THIS
                 if matching_pages:
                     pages = set(matching_pages)
                     desc = create_pattern_description(range_str)
                     groups = [PageGroup(list(pages), True, range_str)]
                     return pages, desc, groups
-            except ValueError:
-                pass  # Fall through to normal parsing
+                else:
+
+                    # console.print(f"[dim]PATTERN DEBUG: No pages matched pattern '{range_str}'[/dim]")  # ← ADD THIS
+                    # Instead of returning None, throw a proper error
+                    raise ValueError(f"No pages found matching pattern '{range_str}'")
+
+            except ValueError as e:
+                # pass  # Fall through to normal parsing
+                # console.print(f"[dim]PATTERN DEBUG: Pattern parsing failed: {e}[/dim]")  # ← ADD THIS
+                raise
         
+        # If no patterns found, we'll continue on to look for other page range arguments
         return None
 
