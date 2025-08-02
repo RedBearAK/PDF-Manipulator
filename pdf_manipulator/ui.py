@@ -41,8 +41,31 @@ def show_folder_help(pdf_files: list[tuple[Path, int, float]]):
         console.print("Add --replace to overwrite originals (use with extreme caution!)")
 
 
+# def display_pdf_table(pdf_files: list[tuple[Path, int, float]], title: str = "PDF Files Assessment"):
+#     """Display PDF files in a formatted table."""
+#     table = Table(title=title)
+#     table.add_column("File", style="cyan", no_wrap=True)
+#     table.add_column("Pages", justify="right", style="magenta")
+#     table.add_column("Size (MB)", justify="right", style="green")
+#     table.add_column("Status", style="yellow")
+
+#     for pdf_path, page_count, file_size in pdf_files:
+#         status = "⚠️  Multi-page" if page_count > 1 else "✓ Single page"
+#         table.add_row(
+#             pdf_path.name,
+#             str(page_count),
+#             f"{file_size:.2f}",
+#             status
+#         )
+
+#     console.print(table)
+
+
+# def display_pdf_table_simple(pdf_files: list[tuple[Path, int, float]], title: str = "PDF Files Assessment"):
 def display_pdf_table(pdf_files: list[tuple[Path, int, float]], title: str = "PDF Files Assessment"):
-    """Display PDF files in a formatted table."""
+    """Display PDF files in a formatted table with malformation indicators."""
+    from pdf_manipulator.core.malformation_utils import check_pdf_malformation
+    
     table = Table(title=title)
     table.add_column("File", style="cyan", no_wrap=True)
     table.add_column("Pages", justify="right", style="magenta")
@@ -50,7 +73,20 @@ def display_pdf_table(pdf_files: list[tuple[Path, int, float]], title: str = "PD
     table.add_column("Status", style="yellow")
 
     for pdf_path, page_count, file_size in pdf_files:
-        status = "⚠️  Multi-page" if page_count > 1 else "✓ Single page"
+        # Check malformation status
+        is_malformed, description = check_pdf_malformation(pdf_path)
+        
+        # Create status with malformation indicator
+        if page_count > 1:
+            base_status = "  Multi-page"  # "⚠️  Multi-page"
+        else:
+            base_status = "✓ Single page"
+        
+        if is_malformed:
+            status = f"{base_status} 🔴"  # Red circle for any malformation
+        else:
+            status = base_status
+        
         table.add_row(
             pdf_path.name,
             str(page_count),
