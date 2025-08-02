@@ -12,8 +12,9 @@ from pdf_manipulator._version import __version__
 from pdf_manipulator.core.scanner import scan_folder, scan_file
 from pdf_manipulator.core.processor import process_single_file_operations
 from pdf_manipulator.core.folder_operations import handle_folder_operations
-from pdf_manipulator.core.malformation_checker import (
-    check_and_fix_malformation_batch, check_and_fix_malformation_early
+from pdf_manipulator.core.malformation_utils import (
+    check_and_fix_malformation_batch,
+    check_and_fix_malformation_early
 )
 
 
@@ -61,9 +62,37 @@ Page Range Syntax for --extract-pages:
                         2::2      (even pages)
                         5:20:3    (every 3rd page from 5 to 20)
 
+Content-Based Selection:
+    Text patterns:      contains[/i]:"text"     (case-insensitive with /i)
+                        regex[/i]:"pattern"     (regular expressions)
+                        line-starts[/i]:"text"  (lines starting with text)
+    
+    Page types:         type:text      (text-heavy pages)
+                        type:image     (scanned/image pages)
+                        type:mixed     (pages with both text and images)
+                        type:empty     (blank or nearly blank pages)
+    
+    Size filtering:     size:<500KB    (pages under 500KB)
+                        size:>1MB      (pages over 1MB)
+                        size:>=2MB     (pages 2MB or larger)
+                        size:<=100KB   (pages 100KB or smaller)
+
+Boolean Expressions:
+    AND logic:          "contains:'Invoice' & contains:'Total'"
+    OR logic:           "type:text | type:mixed"
+    NOT logic:          "all & !type:empty"  (all pages except empty ones)
+    Complex:            "type:text & size:<500KB"  (small text pages)
+
+Range Patterns:
+    Pattern to pattern: "contains:'Chapter 1' to contains:'Chapter 2'"
+    Number to pattern:  "5 to contains:'Appendix'"
+    Pattern to number:  "contains:'Start' to 10"
+    With offsets:       "contains:'Summary'+1 to contains:'Index'-1"
+
 Extraction Options:
     --separate-files    Extract pages as separate documents (one file per page)
                         Default: extract as single document combining all pages
+    --respect-groups    Respect comma-separated groupings in extraction
                         Interactive mode will ask unless this flag is specified
 
 Ghostscript Options:
@@ -81,28 +110,64 @@ Examples:
     %(prog)s /path/to/folder           # Scan specific folder
     %(prog)s file.pdf                  # Process single file
     %(prog)s --version                 # Show version information
+    
+    Basic operations:
     %(prog)s file.pdf --analyze        # Analyze single PDF
-    %(prog)s file.pdf --gs-fix         # Fix malformed PDF with Ghostscript
-    %(prog)s --gs-batch-fix --dry-run  # See what PDFs would be fixed
-    %(prog)s --gs-batch-fix --recursive --gs-quality=ebook  # Fix all PDFs recursively
     %(prog)s file.pdf --optimize       # Optimize single PDF
     %(prog)s --strip-first             # Interactive: ask which PDFs to strip
-    %(prog)s --extract-pages=3-7       # Extract pages 3-7 as single document
-    %(prog)s --extract-pages=3-7 --separate-files  # Extract pages 3-7 as separate files
-    %(prog)s --extract-pages="1-3,7,9-11" --respect-groups  # Extract respecting groups
-    %(prog)s --extract-pages="1-3,7"   # Extract pages 1-3 and 7 (asks: single or separate)
-    %(prog)s --extract-pages="last 2"  # Extract last 2 pages
-    %(prog)s --extract-pages=::2       # Extract odd pages
     %(prog)s --split-pages             # Interactive: ask which PDFs to split
-    %(prog)s --strip-first --batch     # Strip ALL multi-page PDFs (careful!)
-    %(prog)s file.pdf --split-pages    # Split single PDF into pages
+    
+    Analysis:
+    %(prog)s file.pdf --analyze             # Basic PDF analysis
+    %(prog)s file.pdf --analyze-detailed    # Detailed page-by-page breakdown
+    
+    Page range extraction:
+    %(prog)s file.pdf --extract-pages=3-7       # Extract pages 3-7
+    %(prog)s file.pdf --extract-pages="1-3,7"   # Extract pages 1-3 and 7
+    %(prog)s file.pdf --extract-pages="last 2"  # Extract last 2 pages
+    %(prog)s file.pdf --extract-pages=::2       # Extract odd pages
+    
+    Content-based extraction:
+    %(prog)s file.pdf --extract-pages="type:text"              # Extract text pages
+    %(prog)s file.pdf --extract-pages="type:image"             # Extract image pages
+    %(prog)s file.pdf --extract-pages="size:>1MB"              # Extract large pages
+    %(prog)s file.pdf --extract-pages="contains:'Chapter'"     # Pages with "Chapter"
+    
+    Boolean combinations:
+    %(prog)s file.pdf --extract-pages="type:text & size:<500KB"    # Small text pages
+    %(prog)s file.pdf --extract-pages="type:image | type:mixed"    # Visual content
+    %(prog)s file.pdf --extract-pages="all & !type:empty"          # All non-empty pages
+    %(prog)s file.pdf --extract-pages="contains:'Figure' | size:>2MB"  # Figures or large pages
+    
+    Range patterns:
+    %(prog)s file.pdf --extract-pages="contains:'Chapter 1' to contains:'Chapter 2'"
+    %(prog)s file.pdf --extract-pages="5 to type:empty"  # From page 5 to first empty page
+    
+    Extraction modes:
+    %(prog)s file.pdf --extract-pages="1-3,7" --separate-files   # Extract as separate files
+    %(prog)s file.pdf --extract-pages="1-3,7" --respect-groups   # Respect groupings
+    
+    Ghostscript operations:
+    %(prog)s file.pdf --gs-fix                           # Fix malformed PDF
+    %(prog)s --gs-batch-fix --dry-run                    # See what would be fixed
+    %(prog)s --gs-batch-fix --recursive --gs-quality=ebook  # Fix all PDFs recursively
+    
+    Batch operations:
+    %(prog)s --extract-pages="type:text" --batch                # Auto-fixes malformed PDFs
+    %(prog)s --extract-pages="type:text" --batch --no-auto-fix  # Skips malformation fixes
+    %(prog)s --optimize --batch                                 # Auto-fixes before optimizing
+    %(prog)s --optimize --batch --no-auto-fix                   # Optimizes without fixing
+    %(prog)s --extract-pages="type:text" --batch         # Extract text pages from all PDFs
+    %(prog)s --strip-first --batch --replace             # Strip all PDFs to one page (CAREFUL!)
 
 Safety options:
+    --no-auto-fix     Disable automatic malformation fixing in batch mode
     --replace         Replace/delete originals after processing (still asks!)
     --replace-originals  Replace originals with Ghostscript fixed versions (CAREFUL!)
     --strip-first --batch --replace    # Most dangerous: strips all and replaces
 
 Note: No short arguments are provided to ensure clarity and prevent accidents.
+      Use quotes around complex expressions with spaces or special characters.
 """
 
 
@@ -142,6 +207,8 @@ def main():
         help='Optimize PDF file sizes')
     operations.add_argument('--analyze', action='store_true',
         help='Analyze PDFs to understand file sizes')
+    operations.add_argument('--analyze-detailed', action='store_true',
+        help='Detailed page-by-page analysis to help craft boolean expressions')
 
     # Ghostscript operations
     ghostscript = parser.add_argument_group('ghostscript operations')
@@ -172,6 +239,8 @@ def main():
 
     # Safety options
     safety = parser.add_argument_group('safety options')
+    safety.add_argument('--no-auto-fix', action='store_true',
+        help='Disable automatic malformation fixing in batch mode')
     safety.add_argument('--replace', action='store_true',
         help='Replace original files after processing (CAREFUL!)')
     safety.add_argument('--replace-originals', action='store_true',
@@ -218,7 +287,13 @@ def main():
         sys.exit(1)
 
     # Count operations
-    regular_operations = sum([bool(args.extract_pages), args.split_pages, args.optimize, args.analyze])
+    regular_operations = sum([
+        bool(args.extract_pages),
+        args.split_pages,
+        args.optimize,
+        args.analyze,
+        args.analyze_detailed
+        ])
     ghostscript_operations = sum([args.gs_fix, args.gs_batch_fix])
     
     if regular_operations > 1:
@@ -266,7 +341,8 @@ def main():
             console.print("[yellow]No PDF files found![/yellow]")
             sys.exit(0)
         
-        pdf_files = check_and_fix_malformation_batch(pdf_files, args)
+        # pdf_files = check_and_fix_malformation_batch(pdf_files, args)
+        pdf_files = check_and_fix_malformation_batch(pdf_files, "scanning")
         
         display_pdf_table(pdf_files)
         handle_folder_operations(args, pdf_files)

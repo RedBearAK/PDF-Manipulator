@@ -9,13 +9,22 @@ from rich.console import Console
 from pdf_manipulator.ui import *
 from pdf_manipulator.core.scanner import *
 from pdf_manipulator.core.operations import *
+from pdf_manipulator.core.detailed_analysis import handle_detailed_analysis
+from pdf_manipulator.core.malformation_utils import ensure_pdf_ready_for_optimization
+
 
 console = Console()
 
 
 def process_single_file_operations(args: argparse.Namespace, pdf_files: list[tuple[Path, int, float]]):
     """Process operations on a single PDF file."""
-    if any([args.extract_pages, args.split_pages, args.optimize, args.analyze]):
+    if any([
+        args.extract_pages,
+        args.split_pages,
+        args.optimize,
+        args.analyze,
+        args.analyze_detailed
+        ]):
         pdf_path, page_count, file_size = pdf_files[0]
         process_single_pdf(pdf_path, page_count, file_size, args)
     else:
@@ -28,7 +37,13 @@ def process_single_file_mode(args: argparse.Namespace, pdf_files: list[tuple[Pat
     """Handle all single file processing logic."""
     pdf_path, page_count, file_size = pdf_files[0]
     
-    if any([args.extract_pages, args.split_pages, args.optimize, args.analyze]):
+    if any([
+        args.extract_pages,
+        args.split_pages,
+        args.optimize,
+        args.analyze,
+        args.analyze_detailed
+        ]):
         process_single_pdf(pdf_path, page_count, file_size, args)
     else:
         # Show available operations
@@ -37,43 +52,50 @@ def process_single_file_mode(args: argparse.Namespace, pdf_files: list[tuple[Pat
             pass
 
 
-def process_folder_mode(args: argparse.Namespace, pdf_files: list[tuple[Path, int, float]]):
-    """Handle all folder processing logic."""
-    if args.analyze:
-        # Move analyze logic here
-        pass
-    elif args.optimize:
-        # Move optimize logic here  
-        pass
-    elif args.extract_pages or args.split_pages:
-        # Move all the extraction/split logic here
-        pass
-    else:
-        # Show available operations
-        pass
-
-
 def process_single_pdf(pdf_path: Path, page_count: int, file_size: float,
                         args: argparse.Namespace):
     """Process a single PDF file based on the specified operation."""
     if args.analyze:
         analyze_pdf(pdf_path)
 
+    elif args.analyze_detailed:
+        # Pass the no_auto_fix flag from args
+        handle_detailed_analysis(pdf_path, getattr(args, 'no_auto_fix', False))
+
     elif args.optimize:
-        if args.batch or Confirm.ask(f"Optimize {pdf_path.name}?", default=True):
-            output_path, new_size = optimize_pdf(pdf_path)
+        # NEW: Check and fix malformation before optimizing
+        ready_pdf_path = ensure_pdf_ready_for_optimization(
+            pdf_path, 
+            batch_mode=getattr(args, 'batch', False),
+            no_auto_fix=getattr(args, 'no_auto_fix', False)
+        )
+        
+        if ready_pdf_path is None:
+            return  # User cancelled
+        
+        # Use the potentially fixed PDF for optimization
+        if args.batch or Confirm.ask(f"Optimize {ready_pdf_path.name}?", default=True):
+            output_path, new_size = optimize_pdf(ready_pdf_path)
             if output_path:
                 console.print(f"[green]✓ Optimized:[/green] {output_path.name} "
                             f"({file_size:.2f} MB → {new_size:.2f} MB)")
+                
+                # Show if malformation fixing contributed to size reduction
+                if ready_pdf_path != pdf_path:
+                    console.print("[dim]Size reduction includes malformation repair[/dim]")
+                    
                 if args.replace and Confirm.ask("Replace original file?", default=False):
                     pdf_path.unlink()
                     output_path.rename(pdf_path)
                     console.print("[green]✓ Original file replaced[/green]")
 
     elif args.extract_pages:
+        # The existing extraction logic can stay mostly the same
+        # The malformation checking happens in the malformation_checker.py
+        # which should be updated to use the legacy wrapper
+        
         # Validate that extraction makes sense for this PDF
         try:
-            # pages_to_extract, _, groups = parse_page_range(args.extract_pages, page_count)
             pages_to_extract, _, groups = parse_page_range(args.extract_pages, page_count, pdf_path)
             if len(pages_to_extract) == page_count:
                 console.print("[yellow]Extracting all pages - consider using --optimize instead[/yellow]")

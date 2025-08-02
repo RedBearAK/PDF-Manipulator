@@ -239,48 +239,40 @@ class PageRangeParser:
         if looks_like_boolean_expression(range_str):
             try:
                 matching_pages = parse_boolean_expression(range_str, self.pdf_path, self.total_pages)
-                if matching_pages:
-                    pages = set(matching_pages)
-                    desc = create_boolean_description(range_str)
-                    groups = [PageGroup(list(pages), True, range_str)]
-                    return pages, desc, groups
-            except ValueError:
-                pass  # Fall through to normal parsing
+                # Always return boolean results, even if empty (empty is a valid result)
+                pages = set(matching_pages)
+                desc = create_boolean_description(range_str)
+                groups = [PageGroup(list(pages), True, range_str)]
+                return pages, desc, groups
+            except ValueError as e:
+                # Boolean pattern was recognized but parsing failed (syntax error, etc.)
+                raise ValueError(f"Boolean expression error: {e}")
         
         # Range patterns: "contains:'A' to contains:'B'"
         if looks_like_range_pattern(range_str):
             try:
                 matching_pages = parse_range_pattern(range_str, self.pdf_path, self.total_pages)
-                if matching_pages:
-                    pages = set(matching_pages)
-                    desc = f"range-{min(pages)}-{max(pages)}"
-                    groups = [PageGroup(list(pages), True, range_str)]
-                    return pages, desc, groups
-            except ValueError:
-                pass  # Fall through to normal parsing
+                # Always return range results, even if empty (empty is a valid result)
+                pages = set(matching_pages)
+                desc = f"range-{min(pages)}-{max(pages)}" if pages else "range-empty"
+                groups = [PageGroup(list(pages), True, range_str)]
+                return pages, desc, groups
+            except ValueError as e:
+                # Range pattern was recognized but parsing failed (syntax error, etc.)
+                raise ValueError(f"Range pattern error: {e}")
         
-        # Single patterns: "contains:'text'"
+        # Single patterns: "contains:'text'", "type:image", "size:>1MB"
         if looks_like_pattern(range_str):
-            # console.print(f"[dim]PATTERN DEBUG: Recognized as single pattern, searching...[/dim]")  # ← ADD THIS
             try:
                 matching_pages = parse_pattern_expression(range_str, self.pdf_path, self.total_pages)
-                # console.print(f"[dim]PATTERN DEBUG: Found {len(matching_pages)} matching pages[/dim]")  # ← ADD THIS
-                if matching_pages:
-                    pages = set(matching_pages)
-                    desc = create_pattern_description(range_str)
-                    groups = [PageGroup(list(pages), True, range_str)]
-                    return pages, desc, groups
-                else:
-
-                    # console.print(f"[dim]PATTERN DEBUG: No pages matched pattern '{range_str}'[/dim]")  # ← ADD THIS
-                    # Instead of returning None, throw a proper error
-                    raise ValueError(f"No pages found matching pattern '{range_str}'")
-
+                # Always return pattern results, even if empty (empty is a valid result)
+                pages = set(matching_pages)
+                desc = create_pattern_description(range_str)
+                groups = [PageGroup(list(pages), True, range_str)]
+                return pages, desc, groups
             except ValueError as e:
-                # pass  # Fall through to normal parsing
-                # console.print(f"[dim]PATTERN DEBUG: Pattern parsing failed: {e}[/dim]")  # ← ADD THIS
-                raise
+                # Pattern was recognized but parsing failed (syntax error, etc.)
+                raise ValueError(f"Pattern error: {e}")
         
-        # If no patterns found, we'll continue on to look for other page range arguments
+        # No advanced pattern recognized - continue with normal page range parsing
         return None
-

@@ -93,62 +93,62 @@ def check_and_fix_malformation_batch(pdf_files: list[tuple[Path, int, float]], a
     return pdf_files
 
 
-def check_and_fix_malformation_for_extraction(pdf_files: list[tuple[Path, int, float]], args) -> list[tuple[Path, int, float]]:
-    """Check for malformation during extraction and offer to fix individual files."""
+# def check_and_fix_malformation_for_extraction(pdf_files: list[tuple[Path, int, float]], args) -> list[tuple[Path, int, float]]:
+#     """Check for malformation during extraction and offer to fix individual files."""
     
-    # Only check the first file (for individual processing)
-    pdf_path, page_count, file_size = pdf_files[0]
+#     # Only check the first file (for individual processing)
+#     pdf_path, page_count, file_size = pdf_files[0]
     
-    # Early return if we don't need to check
-    if not any([args.extract_pages, args.split_pages]):
-        return pdf_files
+#     # Early return if we don't need to check
+#     if not any([args.extract_pages, args.split_pages]):
+#         return pdf_files
     
-    # Try to detect malformation
-    try:
-        from pdf_manipulator.core.ghostscript import detect_malformed_pdf, check_ghostscript_availability
-    except ImportError:
-        return pdf_files
+#     # Try to detect malformation
+#     try:
+#         from pdf_manipulator.core.ghostscript import detect_malformed_pdf, check_ghostscript_availability
+#     except ImportError:
+#         return pdf_files
     
-    try:
-        is_malformed, description = detect_malformed_pdf(pdf_path)
-    except Exception:
-        return pdf_files
+#     try:
+#         is_malformed, description = detect_malformed_pdf(pdf_path)
+#     except Exception:
+#         return pdf_files
     
-    # Early return if not malformed
-    if not is_malformed:
-        return pdf_files
+#     # Early return if not malformed
+#     if not is_malformed:
+#         return pdf_files
     
-    # Show malformation warning for this specific file
-    console.print(f"\n[yellow]⚠️  {pdf_path.name} has issues:[/yellow]")
-    console.print(f"[yellow]{description}[/yellow]")
+#     # Show malformation warning for this specific file
+#     console.print(f"\n[yellow]⚠️  {pdf_path.name} has issues:[/yellow]")
+#     console.print(f"[yellow]{description}[/yellow]")
     
-    if "Structural corruption" in description:
-        console.print("[yellow]This may cause processing errors or unexpected results[/yellow]")
-    elif "Resource duplication" in description:
-        console.print("[yellow]Extracted pages will be unnecessarily large[/yellow]")
+#     if "Structural corruption" in description:
+#         console.print("[yellow]This may cause processing errors or unexpected results[/yellow]")
+#     elif "Resource duplication" in description:
+#         console.print("[yellow]Extracted pages will be unnecessarily large[/yellow]")
     
-    # Early return if Ghostscript not available
-    if not check_ghostscript_availability():
-        console.print("[yellow]Ghostscript not available for fixing[/yellow]")
-        console.print("[dim]Install with: brew install ghostscript (macOS) or apt install ghostscript (Ubuntu)[/dim]")
+#     # Early return if Ghostscript not available
+#     if not check_ghostscript_availability():
+#         console.print("[yellow]Ghostscript not available for fixing[/yellow]")
+#         console.print("[dim]Install with: brew install ghostscript (macOS) or apt install ghostscript (Ubuntu)[/dim]")
         
-        if not Confirm.ask("Continue with malformed PDF anyway?", default=True):
-            console.print("[blue]Skipping this file[/blue]")
-            return []  # Return empty list to skip this file
-        return pdf_files
+#         if not Confirm.ask("Continue with malformed PDF anyway?", default=True):
+#             console.print("[blue]Skipping this file[/blue]")
+#             return []  # Return empty list to skip this file
+#         return pdf_files
     
-    # Early return for batch mode
-    if args.batch:
-        console.print("[yellow]Batch mode: continuing with malformed PDF[/yellow]")
-        return pdf_files
+#     # Early return for batch mode
+#     if args.batch:
+#         console.print("[yellow]Batch mode: continuing with malformed PDF[/yellow]")
+#         return pdf_files
     
-    # Ask user if they want to fix
-    if not Confirm.ask("Fix with Ghostscript before processing?", default=True):
-        console.print("[yellow]Continuing with malformed PDF (results may be suboptimal)[/yellow]")
-        return pdf_files
+#     # Ask user if they want to fix
+#     if not Confirm.ask("Fix with Ghostscript before processing?", default=True):
+#         console.print("[yellow]Continuing with malformed PDF (results may be suboptimal)[/yellow]")
+#         return pdf_files
     
-    # Try to fix the PDF
-    return _attempt_individual_pdf_fix(pdf_path, pdf_files, batch_mode=args.batch)
+#     # Try to fix the PDF
+#     return _attempt_individual_pdf_fix(pdf_path, pdf_files, batch_mode=args.batch)
 
 
 def _show_malformation_warning(description: str, args):

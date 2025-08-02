@@ -15,7 +15,7 @@ from pdf_manipulator.core.operations import (
     extract_pages_separate,
     split_to_pages,
 )
-from pdf_manipulator.core.malformation_checker import check_and_fix_malformation_for_extraction
+from pdf_manipulator.core.malformation_utils import check_and_fix_malformation_with_args
 from pdf_manipulator.core.warning_suppression import suppress_all_pdf_warnings
 
 
@@ -171,7 +171,7 @@ def process_interactive_extract(args: argparse.Namespace, pdf_files: list[tuple[
 
         # NEW: Check for malformation on individual file
         pdf_files_single = [(pdf_path, page_count, file_size)]
-        fixed_files = check_and_fix_malformation_for_extraction(pdf_files_single, args)
+        fixed_files = check_and_fix_malformation_with_args(pdf_files_single, args)
         
         if not fixed_files:
             console.print("[yellow]Skipping this PDF as requested[/yellow]")

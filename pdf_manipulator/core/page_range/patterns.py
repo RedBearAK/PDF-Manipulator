@@ -1,9 +1,15 @@
+"""
+Updated patterns.py with type and size pattern support.
+Replace: pdf_manipulator/core/page_range/patterns.py
+"""
+
 import re
 
 from pypdf import PdfReader
 from pathlib import Path
 from rich.console import Console
 
+from pdf_manipulator.core.page_analysis import PageAnalyzer
 from pdf_manipulator.core.warning_suppression import suppress_pdf_warnings
 
 
@@ -15,26 +21,9 @@ console = Console()
 def looks_like_pattern(range_str: str) -> bool:
     """Check if string looks like a pattern expression."""
     return any([
-        range_str.startswith(('contains', 'regex', 'line-starts')),
-        ':' in range_str and any(range_str.lower().startswith(p) for p in ['contains', 'regex', 'line-starts']),
+        range_str.startswith(('contains', 'regex', 'line-starts', 'type', 'size')),
+        ':' in range_str and any(range_str.lower().startswith(p) for p in ['contains', 'regex', 'line-starts', 'type', 'size']),
     ])
-
-
-# def looks_like_pattern(range_str: str) -> bool:
-#     """Check if string looks like a pattern expression."""
-    
-#     console.print(f"[dim]LOOKS_LIKE DEBUG: Testing '{range_str}'[/dim]")
-    
-#     condition1 = range_str.startswith(('contains', 'regex', 'line-starts'))
-#     condition2 = ':' in range_str and any(range_str.lower().startswith(p) for p in ['contains', 'regex', 'line-starts'])
-    
-#     console.print(f"[dim]LOOKS_LIKE DEBUG: condition1 (starts with): {condition1}[/dim]")
-#     console.print(f"[dim]LOOKS_LIKE DEBUG: condition2 (colon + starts): {condition2}[/dim]")
-    
-#     result = any([condition1, condition2])
-#     console.print(f"[dim]LOOKS_LIKE DEBUG: final result: {result}[/dim]")
-    
-#     return result
 
 
 def looks_like_range_pattern(range_str: str) -> bool:
@@ -162,6 +151,13 @@ def _find_pages_by_pattern(pdf_path: Path, pattern_type: str, pattern_value: str
     
     matching_pages = []
     
+    # Handle new pattern types first
+    if pattern_type == 'type':
+        return _find_pages_by_type(pdf_path, pattern_value)
+    elif pattern_type == 'size':
+        return _find_pages_by_size(pdf_path, pattern_value)
+    
+    # Handle existing text-based patterns
     try:
         with suppress_pdf_warnings():
             reader = PdfReader(pdf_path)
@@ -194,3 +190,39 @@ def _find_pages_by_pattern(pdf_path: Path, pattern_type: str, pattern_value: str
         raise ValueError(f"Error searching for pattern: {e}")
     
     return matching_pages
+
+
+def _find_pages_by_type(pdf_path: Path, page_type: str) -> list[int]:
+    """Find pages matching a specific content type."""
+    
+    valid_types = ['text', 'image', 'mixed', 'empty']
+    if page_type.lower() not in valid_types:
+        raise ValueError(f"Invalid page type '{page_type}'. Valid types: {', '.join(valid_types)}")
+    
+    try:
+        with PageAnalyzer(pdf_path) as analyzer:
+            matching_pages = analyzer.get_pages_by_type(page_type.lower())
+            
+        if not matching_pages:
+            console.print(f"[dim]No pages found with type '{page_type}'[/dim]")
+            
+        return matching_pages
+        
+    except Exception as e:
+        raise ValueError(f"Error analyzing page types: {e}")
+
+
+def _find_pages_by_size(pdf_path: Path, size_condition: str) -> list[int]:
+    """Find pages matching a size condition."""
+    
+    try:
+        with PageAnalyzer(pdf_path) as analyzer:
+            matching_pages = analyzer.get_pages_by_size(size_condition)
+            
+        if not matching_pages:
+            console.print(f"[dim]No pages found matching size condition '{size_condition}'[/dim]")
+            
+        return matching_pages
+        
+    except Exception as e:
+        raise ValueError(f"Error analyzing page sizes: {e}")
