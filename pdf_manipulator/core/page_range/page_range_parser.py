@@ -82,6 +82,40 @@ class PageRangeParser:
         
         return None
     
+
+    def _create_consecutive_groups(self, pages: list[int], original_spec: str) -> list[PageGroup]:
+        """Convert a list of pages into consecutive run groups."""
+        if not pages:
+            return []
+        
+        sorted_pages = sorted(set(pages))  # Remove duplicates and sort
+        groups = []
+        current_run = [sorted_pages[0]]
+        
+        for i in range(1, len(sorted_pages)):
+            if sorted_pages[i] == sorted_pages[i-1] + 1:
+                # Consecutive - extend current run
+                current_run.append(sorted_pages[i])
+            else:
+                # Gap found - finalize current run and start new one
+                groups.append(self._create_group_from_run(current_run))
+                current_run = [sorted_pages[i]]
+        
+        # Don't forget the final run
+        groups.append(self._create_group_from_run(current_run))
+        
+        return groups
+
+    def _create_group_from_run(self, run: list[int]) -> PageGroup:
+        """Create appropriate PageGroup for a consecutive run."""
+        if len(run) == 1:
+            # Single page: not a range
+            return PageGroup(run, False, str(run[0]))
+        else:
+            # Consecutive range: is a range
+            start, end = run[0], run[-1]
+            return PageGroup(run, True, f"{start}-{end}")
+
     def _parse_comma_separated_parts(self, range_str: str):
         """Parse comma-separated range parts."""
         parts = [p.strip() for p in range_str.split(',')]
@@ -242,7 +276,8 @@ class PageRangeParser:
                 # Always return boolean results, even if empty (empty is a valid result)
                 pages = set(matching_pages)
                 desc = create_boolean_description(range_str)
-                groups = [PageGroup(list(pages), True, range_str)]
+                # groups = [PageGroup(list(pages), True, range_str)]
+                groups = self._create_consecutive_groups(list(pages), range_str)
                 return pages, desc, groups
             except ValueError as e:
                 # Boolean pattern was recognized but parsing failed (syntax error, etc.)
@@ -255,7 +290,9 @@ class PageRangeParser:
                 # Always return range results, even if empty (empty is a valid result)
                 pages = set(matching_pages)
                 desc = f"range-{min(pages)}-{max(pages)}" if pages else "range-empty"
-                groups = [PageGroup(list(pages), True, range_str)]
+                # groups = [PageGroup(list(pages), True, range_str)]
+                # Redundant because this should be a range (already consecutive group)
+                groups = self._create_consecutive_groups(list(pages), range_str)
                 return pages, desc, groups
             except ValueError as e:
                 # Range pattern was recognized but parsing failed (syntax error, etc.)
@@ -268,7 +305,8 @@ class PageRangeParser:
                 # Always return pattern results, even if empty (empty is a valid result)
                 pages = set(matching_pages)
                 desc = create_pattern_description(range_str)
-                groups = [PageGroup(list(pages), True, range_str)]
+                # groups = [PageGroup(list(pages), True, range_str)]
+                groups = self._create_consecutive_groups(list(pages), range_str)
                 return pages, desc, groups
             except ValueError as e:
                 # Pattern was recognized but parsing failed (syntax error, etc.)
