@@ -203,6 +203,7 @@ def main():
     setup_signal_handlers()
 
     parser = argparse.ArgumentParser(
+        prog="pdf-manipulator",
         description="PDF Manipulator - Assess and manipulate PDF pages",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=epilog_for_argparse
