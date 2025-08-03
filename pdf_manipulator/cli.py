@@ -226,6 +226,13 @@ def main():
     extraction.add_argument('--respect-groups', action='store_true',
         help='Respect comma-separated groupings: ranges→multi-page files, individuals→single files')
 
+    # # Boundary detection options
+    # boundary = parser.add_argument_group('boundary detection options')
+    # boundary.add_argument('--group-start', type=str, metavar='PATTERN',
+    #     help='Start new groups at pages matching pattern (e.g., "contains:\'Chapter\'")')
+    # boundary.add_argument('--group-end', type=str, metavar='PATTERN', 
+    #     help='End current groups at pages matching pattern (e.g., "contains:\'Summary\'")')
+
     # Processing modes
     modes = parser.add_argument_group('processing modes')
     modes.add_argument('--interactive', action='store_true',
