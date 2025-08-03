@@ -96,7 +96,12 @@ def process_single_pdf(pdf_path: Path, page_count: int, file_size: float,
         
         # Validate that extraction makes sense for this PDF
         try:
-            pages_to_extract, _, groups = parse_page_range(args.extract_pages, page_count, pdf_path)
+
+            from pdf_manipulator.core.parser import parse_page_range_from_args
+            pages_to_extract, desc, groups = parse_page_range_from_args(args, page_count, pdf_path)
+
+            # pages_to_extract, _, groups = parse_page_range(args.extract_pages, page_count, pdf_path)
+
             if len(pages_to_extract) == page_count:
                 console.print("[yellow]Extracting all pages - consider using --optimize instead[/yellow]")
 

@@ -160,6 +160,27 @@ Examples:
     %(prog)s --extract-pages="type:text" --batch         # Extract text pages from all PDFs
     %(prog)s --strip-first --batch --replace             # Strip all PDFs to one page (CAREFUL!)
 
+    Group filtering:
+    %(prog)s file.pdf --extract-pages="contains:'Chapter' to contains:'Summary'" --filter-matches="1,3"
+        # Find all chapter sections, but only extract chapters 1 and 3
+    
+    %(prog)s file.pdf --extract-pages="type:text" --filter-matches="contains:'Important'"
+        # Extract text pages, but only keep groups containing "Important"
+    
+    %(prog)s file.pdf --extract-pages="all" --group-start="contains:'Section'" --filter-matches="size:>1MB"
+        # Split all pages at section boundaries, keep only large sections
+    
+    Boundary detection:
+    %(prog)s file.pdf --extract-pages="1-50" --group-start="contains:'Chapter'"
+        # Extract pages 1-50, split into groups at chapter boundaries
+    
+    %(prog)s file.pdf --extract-pages="type:text" --group-start="contains:'Article'" --group-end="contains:'References'"
+        # Extract text pages, create article sections from "Article" to "References"
+    
+    Complex filtering:
+    %(prog)s file.pdf --extract-pages="type:text | type:mixed" --filter-matches="contains:'Critical' & !25-40"
+        # Get text/mixed pages, filter to groups with "Critical" but not overlapping pages 25-40
+
 Safety options:
     --no-auto-fix     Disable automatic malformation fixing in batch mode
     --replace         Replace/delete originals after processing (still asks!)
@@ -226,12 +247,16 @@ def main():
     extraction.add_argument('--respect-groups', action='store_true',
         help='Respect comma-separated groupings: ranges→multi-page files, individuals→single files')
 
-    # # Boundary detection options
-    # boundary = parser.add_argument_group('boundary detection options')
-    # boundary.add_argument('--group-start', type=str, metavar='PATTERN',
-    #     help='Start new groups at pages matching pattern (e.g., "contains:\'Chapter\'")')
-    # boundary.add_argument('--group-end', type=str, metavar='PATTERN', 
-    #     help='End current groups at pages matching pattern (e.g., "contains:\'Summary\'")')
+    # Group filtering and boundary options (add after extraction group)
+    filtering = parser.add_argument_group('group filtering and boundaries')
+    filtering.add_argument('--filter-matches', type=str, metavar='CRITERIA',
+        help=('Filter extracted page groups by index (e.g., "1,3,4") or content criteria '
+            '(e.g., "contains:\'Important\'", "type:text & !37-96"). '
+            'Only matching groups will be kept.'))
+    filtering.add_argument('--group-start', type=str, metavar='PATTERN',
+        help='Start new groups at pages matching pattern (e.g., "contains:\'Chapter\'", "type:text")')
+    filtering.add_argument('--group-end', type=str, metavar='PATTERN', 
+        help='End current groups at pages matching pattern (e.g., "contains:\'Summary\'", "size:>1MB")')
 
     # Processing modes
     modes = parser.add_argument_group('processing modes')
@@ -292,6 +317,23 @@ def main():
     if args.dry_run and not args.gs_batch_fix:
         console.print("[red]Error: --dry-run can only be used with --gs-batch-fix[/red]")
         sys.exit(1)
+
+    # Validate group filtering arguments
+    if args.filter_matches and not args.extract_pages:
+        console.print("[red]Error: --filter-matches can only be used with --extract-pages[/red]")
+        sys.exit(1)
+
+    if (args.group_start or args.group_end) and not args.extract_pages:
+        console.print("[red]Error: --group-start and --group-end can only be used with --extract-pages[/red]")
+        sys.exit(1)
+
+    # Validate filter syntax early
+    if args.filter_matches:
+        from pdf_manipulator.core.page_range.group_filtering import validate_filter_syntax
+        is_valid, error_msg = validate_filter_syntax(args.filter_matches)
+        if not is_valid:
+            console.print(f"[red]Error: Invalid filter syntax: {error_msg}[/red]")
+            sys.exit(1)
 
     # Count operations
     regular_operations = sum([
