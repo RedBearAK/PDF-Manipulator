@@ -59,14 +59,58 @@ class UnifiedBooleanSupervisor:
             # Simple boolean processing with standard precedence
             return self._process_simple_boolean(expression)
     
+    # def _looks_like_boolean_expression(self, range_str: str) -> bool:
+    #     """Check if string looks like a boolean expression."""
+    #     # Find boolean operators outside quoted strings with exact spacing
+    #     operators_found = self._find_boolean_operators(range_str)
+    #     parentheses_found = '(' in range_str and ')' in range_str
+        
+    #     return len(operators_found) > 0 or parentheses_found
+
     def _looks_like_boolean_expression(self, range_str: str) -> bool:
         """Check if string looks like a boolean expression."""
         # Find boolean operators outside quoted strings with exact spacing
         operators_found = self._find_boolean_operators(range_str)
-        parentheses_found = '(' in range_str and ')' in range_str
+        
+        # Check for parentheses outside quoted strings
+        parentheses_found = self._contains_unquoted_parentheses(range_str)
         
         return len(operators_found) > 0 or parentheses_found
-    
+
+    def _contains_unquoted_parentheses(self, text: str) -> bool:
+        """Check if text contains parentheses outside quoted strings."""
+        in_quote = False
+        quote_char = None
+        has_open = False
+        has_close = False
+        
+        i = 0
+        while i < len(text):
+            char = text[i]
+            
+            # Handle escapes
+            if char == '\\' and i + 1 < len(text):
+                i += 2
+                continue
+                
+            # Handle quotes
+            if char in ['"', "'"] and not in_quote:
+                in_quote = True
+                quote_char = char
+            elif char == quote_char and in_quote:
+                in_quote = False
+                quote_char = None
+            elif not in_quote:
+                # Check for parentheses when not in quotes
+                if char == '(':
+                    has_open = True
+                elif char == ')':
+                    has_close = True
+                    
+            i += 1
+        
+        return has_open and has_close
+
     def _process_simple_boolean(self, expression: str) -> tuple[list[int], list[PageGroup]]:
         """Process simple boolean expressions (no range patterns)."""
         
@@ -86,27 +130,32 @@ class UnifiedBooleanSupervisor:
         tokens = self._tokenize_expression(expression)
         patterns = []
         
-        # Look for "X to Y" patterns in tokens
-        i = 0
-        while i < len(tokens) - 2:
-            if tokens[i + 1].lower() == 'to':
-                # Found potential range pattern
-                start_token = tokens[i]
-                end_token = tokens[i + 2]
-                range_pattern = f"{start_token} to {end_token}"
+        # Check each token for range patterns (handles parenthesized patterns)
+        for token in tokens:
+            if looks_like_range_pattern(token):
+                patterns.append(token)
+        
+        # # Also look for "X to Y" patterns across multiple tokens
+        # i = 0
+        # while i < len(tokens) - 2:
+        #     if tokens[i + 1].lower() == 'to':
+        #         # Found potential range pattern
+        #         start_token = tokens[i]
+        #         end_token = tokens[i + 2]
+        #         range_pattern = f"{start_token} to {end_token}"
                 
-                if looks_like_range_pattern(range_pattern):
-                    patterns.append(range_pattern)
-                    i += 3  # Skip past this pattern
-                else:
-                    i += 1
-            else:
-                i += 1
+        #         if looks_like_range_pattern(range_pattern):
+        #             patterns.append(range_pattern)
+        #             i += 3  # Skip past this pattern
+        #         else:
+        #             i += 1
+        #     else:
+        #         i += 1
         
         return patterns
     
     def _process_with_magazine_pattern(self, expression: str, 
-                                     advanced_patterns: list[str]) -> tuple[list[int], list[PageGroup]]:
+                                advanced_patterns: list[str]) -> tuple[list[int], list[PageGroup]]:
         """Process expression using magazine pattern."""
         
         # For now, handle single advanced pattern (Rule 1: only one range criteria)
@@ -168,8 +217,15 @@ class UnifiedBooleanSupervisor:
         # Replace the range pattern with a placeholder that represents "current group"
         simplified = expression.replace(range_pattern, "GROUP_PAGES")
         
-        # Clean up any resulting double operators or parentheses issues
-        simplified = re.sub(r'\s*\(\s*GROUP_PAGES\s*\)\s*', ' GROUP_PAGES ', simplified)
+        # Clean up any resulting parentheses issues - handle multiple parens
+        # Match any number of opening parens, GROUP_PAGES, any number of closing parens
+        simplified = re.sub(r'\s*\(+\s*GROUP_PAGES\s*\)+\s*', ' GROUP_PAGES ', simplified)
+        
+        # Also handle cases where GROUP_PAGES is left with unbalanced parens
+        simplified = re.sub(r'\(\s*GROUP_PAGES\s*', ' GROUP_PAGES ', simplified)  # ( GROUP_PAGES
+        simplified = re.sub(r'\s*GROUP_PAGES\s*\)', ' GROUP_PAGES ', simplified)  # GROUP_PAGES )
+        
+        # Clean up multiple spaces
         simplified = re.sub(r'\s+', ' ', simplified).strip()
         
         return simplified
@@ -232,6 +288,20 @@ class UnifiedBooleanSupervisor:
         """Evaluate a single expression (no boolean operators)."""
         expr = expr.strip()
         
+        # Validate for malformed expressions that should be boolean
+        if expr.startswith(('&', '|')):
+            op_name = 'AND' if expr.startswith('&') else 'OR'
+            raise ValueError(f"{op_name} operator missing left operand")
+        
+        # Validate parentheses are balanced
+        open_count = expr.count('(')
+        close_count = expr.count(')')
+        if open_count != close_count:
+            if open_count > close_count:
+                raise ValueError("Mismatched parentheses: '(' without ')'")
+            else:
+                raise ValueError("Mismatched parentheses: ')' without '('")
+        
         # Handle 'all' keyword
         if expr.lower() == 'all':
             return list(range(1, self.total_pages + 1))
@@ -275,35 +345,64 @@ class UnifiedBooleanSupervisor:
             
             # Check for operators when not in quotes
             elif not in_quote:
-                # Must have exact spacing: " & ", " | ", " & !"
-                if text[i:i+3] == ' & ':
-                    if (i == 0 or text[i-1] != ' ') and (i+3 >= len(text) or text[i+3] != ' '):
-                        operators.append(('&', i))
-                        i += 3
-                        continue
-                elif text[i:i+3] == ' | ':
-                    if (i == 0 or text[i-1] != ' ') and (i+3 >= len(text) or text[i+3] != ' '):
-                        operators.append(('|', i))
-                        i += 3
-                        continue
-                elif text[i:i+4] == ' & !':
-                    if (i == 0 or text[i-1] != ' ') and (i+4 >= len(text) or text[i+4] != ' '):
-                        operators.append(('&!', i))
-                        i += 4
-                        continue
-                elif char == '!' and (i == 0 or text[i-1].isspace()):
+                # Require EXACT spacing - no extra spaces allowed
+                if text[i:i+3] == ' & ' and self._has_exact_spacing(text, i, 3):
+                    operators.append(('&', i))
+                    i += 3
+                    continue
+                elif text[i:i+3] == ' | ' and self._has_exact_spacing(text, i, 3):
+                    operators.append(('|', i))
+                    i += 3  
+                    continue
+                elif text[i:i+4] == ' & !' and self._has_exact_spacing(text, i, 4):
+                    operators.append(('&!', i))
+                    i += 4
+                    continue
+                elif char == '!' and self._is_valid_standalone_not(text, i):
                     operators.append(('!', i))
             
             i += 1
         
         return operators
     
+    def _has_exact_spacing(self, text: str, pos: int, length: int) -> bool:
+        """Check that operator has exact spacing (no extra spaces)."""
+        # Check character before (should not be space if we found ' &')
+        if pos > 0 and text[pos-1].isspace():
+            return False
+        # Check character after (should not be space if we found '& ')  
+        if pos + length < len(text) and text[pos + length].isspace():
+            return False
+        return True
+
+    def _is_valid_standalone_not(self, text: str, pos: int) -> bool:
+        """Check if ! is a valid standalone NOT operator with proper context."""
+        # Must be at start
+        if pos == 0:
+            return True
+        
+        # Check what comes before the !
+        prev_char = text[pos-1]
+        
+        # Valid after opening parenthesis
+        if prev_char == '(':
+            return True
+            
+        # Valid after proper boolean operators (must have exact spacing)
+        if pos >= 3 and text[pos-3:pos] == ' & ':
+            return True
+        if pos >= 3 and text[pos-3:pos] == ' | ':
+            return True
+            
+        return False
+
     def _tokenize_expression(self, expr: str) -> list[str]:
-        """Tokenize expression into operators, operands, and parentheses."""
+        """Tokenize expression with proper parentheses boundary respect."""
         tokens = []
         current_token = ""
         in_quote = False
         quote_char = None
+        paren_depth = 0
         i = 0
         
         while i < len(expr):
@@ -314,7 +413,7 @@ class UnifiedBooleanSupervisor:
                 current_token += char + expr[i + 1]
                 i += 2
                 continue
-            
+                
             # Handle quotes
             if char in ['"', "'"] and not in_quote:
                 in_quote = True
@@ -324,50 +423,64 @@ class UnifiedBooleanSupervisor:
                 in_quote = False
                 quote_char = None
                 current_token += char
-            
-            # Handle tokens when not in quotes
             elif not in_quote:
-                # Check for boolean operators with exact spacing
-                if expr[i:i+4] == ' & !':
-                    if current_token.strip():
-                        tokens.append(current_token.strip())
-                    tokens.append('&!')
-                    current_token = ""
-                    i += 4
-                    continue
-                elif expr[i:i+3] == ' & ':
-                    if current_token.strip():
-                        tokens.append(current_token.strip())
-                    tokens.append('&')
-                    current_token = ""
-                    i += 3
-                    continue
-                elif expr[i:i+3] == ' | ':
-                    if current_token.strip():
-                        tokens.append(current_token.strip())
-                    tokens.append('|')
-                    current_token = ""
-                    i += 3
-                    continue
-                # Handle parentheses
-                elif char in '()':
-                    if current_token.strip():
-                        tokens.append(current_token.strip())
-                    tokens.append(char)
-                    current_token = ""
-                # Handle standalone NOT
-                elif char == '!' and (i == 0 or expr[i-1].isspace()):
-                    if current_token.strip():
-                        tokens.append(current_token.strip())
-                    tokens.append('!')
-                    current_token = ""
+                # Track parentheses and create atomic tokens
+                if char == '(':
+                    if paren_depth == 0:
+                        # Starting new parenthetical group - save any previous token
+                        if current_token.strip():
+                            tokens.append(current_token.strip())
+                            current_token = ""
+                    current_token += char
+                    paren_depth += 1
+                elif char == ')':
+                    current_token += char
+                    paren_depth -= 1
+                    if paren_depth == 0:
+                        # Completed parenthetical group - save as atomic token
+                        if current_token.strip():
+                            tokens.append(current_token.strip())
+                        current_token = ""
+                elif paren_depth == 0:
+                    # Only process operators when at top level (outside all parentheses)
+                    if expr[i:i+4] == ' & !':
+                        if current_token.strip():
+                            tokens.append(current_token.strip())
+                        tokens.append('&!')
+                        current_token = ""
+                        i += 4
+                        continue
+                    elif expr[i:i+3] == ' & ':
+                        if current_token.strip():
+                            tokens.append(current_token.strip())
+                        tokens.append('&')
+                        current_token = ""
+                        i += 3
+                        continue
+                    elif expr[i:i+3] == ' | ':
+                        if current_token.strip():
+                            tokens.append(current_token.strip())
+                        tokens.append('|')
+                        current_token = ""
+                        i += 3
+                        continue
+                    elif char == '!' and (i == 0 or expr[i-1].isspace()):
+                        if current_token.strip():
+                            tokens.append(current_token.strip())
+                        tokens.append('!')
+                        current_token = ""
+                    else:
+                        current_token += char
                 else:
+                    # Inside parentheses - accumulate everything as part of current token
                     current_token += char
             else:
+                # Inside quotes - accumulate everything as part of current token
                 current_token += char
             
             i += 1
         
+        # Add final token if any
         if current_token.strip():
             tokens.append(current_token.strip())
         
@@ -377,6 +490,25 @@ class UnifiedBooleanSupervisor:
         """Parse tokenized expression with precedence: () > ! > & > |"""
         if not tokens:
             return []
+        
+        # Validate first token isn't a binary operator
+        if tokens[0] in ['&', '|', '&!']:
+            op_name = {'&': 'AND', '|': 'OR', '&!': 'AND NOT'}[tokens[0]]
+            raise ValueError(f"{op_name} operator '{tokens[0]}' missing left operand")
+        
+        # Validate parentheses are balanced in each token
+        for token in tokens:
+            paren_count = 0
+            for char in token:
+                if char == '(':
+                    paren_count += 1
+                elif char == ')':
+                    paren_count -= 1
+            if paren_count != 0:
+                if paren_count > 0:
+                    raise ValueError("Mismatched parentheses: '(' without ')'")
+                else:
+                    raise ValueError("Mismatched parentheses: ')' without '('")
         
         # Handle parentheses first (highest precedence)
         tokens = self._resolve_parentheses(tokens)
@@ -454,13 +586,21 @@ class UnifiedBooleanSupervisor:
                 left_operand = result[-1]
                 right_operand = tokens[i + 1]
                 
+
+                # FIX: Evaluate left operand if it's still a string
+                if isinstance(left_operand, list):
+                    left_pages = left_operand
+                else:
+                    left_pages = self._evaluate_simple_expression(left_operand)
+                
+
                 if isinstance(right_operand, list):
                     right_pages = right_operand
                 else:
                     right_pages = self._evaluate_simple_expression(right_operand)
                 
                 # AND with NOT: left & !right
-                and_not_result = list(set(left_operand) - set(right_pages))
+                and_not_result = list(set(left_pages) - set(right_pages))
                 result[-1] = and_not_result  # Replace last result
                 i += 2  # Skip the operand
             else:
@@ -468,7 +608,73 @@ class UnifiedBooleanSupervisor:
                 i += 1
         
         return result
-    
+
+
+    # def _resolve_not_operators(self, tokens: list) -> list:
+    #     """Resolve NOT operators."""
+    #     result = []
+    #     i = 0
+        
+    #     while i < len(tokens):
+    #         if tokens[i] == '!':
+    #             if i + 1 >= len(tokens):
+    #                 raise ValueError("NOT operator '!' missing operand")
+                
+    #             operand = tokens[i + 1]
+    #             print(f"DEBUG: NOT operand type: {type(operand)}, value: {operand}")
+                
+    #             if isinstance(operand, list):
+    #                 # NOT of a sub-expression result
+    #                 operand_pages = operand
+    #                 print(f"DEBUG: operand_pages (from list) type: {type(operand_pages)}, value: {operand_pages}")
+    #             else:
+    #                 # NOT of a single expression
+    #                 operand_pages = self._evaluate_simple_expression(operand)
+    #                 print(f"DEBUG: operand_pages (from expression) type: {type(operand_pages)}, value: {operand_pages}")
+                
+    #             all_pages = set(range(1, self.total_pages + 1))
+    #             print(f"DEBUG: all_pages type: {type(all_pages)}")
+    #             print(f"DEBUG: set(operand_pages) type: {type(set(operand_pages))}")
+                
+    #             not_result = list(all_pages - set(operand_pages))
+    #             print(f"DEBUG: not_result type: {type(not_result)}, value: {not_result}")
+                
+    #             result.append(not_result)
+    #             i += 2  # Skip the operand
+                
+    #         elif tokens[i] == '&!':
+    #             # Handle " & !" as a compound operator
+    #             if not result:
+    #                 raise ValueError("'&!' operator missing left operand")
+    #             if i + 1 >= len(tokens):
+    #                 raise ValueError("'&!' operator missing right operand")
+                
+    #             left_operand = result[-1]
+    #             right_operand = tokens[i + 1]
+                
+    #             print(f"DEBUG: &! left_operand type: {type(left_operand)}, value: {left_operand}")
+    #             print(f"DEBUG: &! right_operand type: {type(right_operand)}, value: {right_operand}")
+                
+    #             if isinstance(right_operand, list):
+    #                 right_pages = right_operand
+    #             else:
+    #                 right_pages = self._evaluate_simple_expression(right_operand)
+    #                 print(f"DEBUG: &! right_pages type: {type(right_pages)}, value: {right_pages}")
+                
+    #             # AND with NOT: left & !right
+    #             and_not_result = list(set(left_operand) - set(right_pages))
+    #             print(f"DEBUG: &! and_not_result type: {type(and_not_result)}")
+                
+    #             result[-1] = and_not_result  # Replace last result
+    #             i += 2  # Skip the operand
+    #         else:
+    #             result.append(tokens[i])
+    #             i += 1
+        
+    #     return result
+
+
+
     def _resolve_and_operators(self, tokens: list) -> list:
         """Resolve AND operators."""
         result = []
@@ -593,23 +799,11 @@ def has_advanced_patterns(expression: str) -> bool:
     """
     Check if boolean expression contains advanced range patterns.
     
-    This is the detection function that determines if escalation is needed.
+    This is just a wrapper around the real detection logic.
     """
-    # Create temporary supervisor for pattern detection
     supervisor = UnifiedBooleanSupervisor(Path("dummy"), 1)
-    tokens = supervisor._tokenize_expression(expression)
-    
-    i = 0
-    while i < len(tokens) - 2:
-        if tokens[i + 1].lower() == 'to':
-            range_pattern = f"{tokens[i]} to {tokens[i + 2]}"
-            if looks_like_range_pattern(range_pattern):
-                return True
-            i += 3
-        else:
-            i += 1
-    
-    return False
+    patterns = supervisor._extract_advanced_patterns(expression)
+    return len(patterns) > 0
 
 
 def evaluate_boolean_expression_with_groups(expression: str, pdf_path: Path, 
@@ -619,3 +813,4 @@ def evaluate_boolean_expression_with_groups(expression: str, pdf_path: Path,
     """
     supervisor = UnifiedBooleanSupervisor(pdf_path, total_pages)
     return supervisor.evaluate(expression)
+

@@ -7,12 +7,36 @@ Does NOT test boolean expressions or range patterns.
 """
 
 import sys
+import atexit
+
 from pathlib import Path
 
 # Add the project root to Python path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
 from pdf_manipulator.core.parser import parse_page_range
+
+from test_pdf_utils import create_test_pdf, cleanup_test_pdfs
+
+def setup():
+    create_test_pdf('test_document.pdf')
+
+def teardown():
+    cleanup_test_pdfs()
+
+
+# Module-level setup - runs once when module is imported
+pdf_created = False
+
+def ensure_test_pdf():
+    """Ensure test PDF exists (create only once)."""
+    global pdf_created
+    if not pdf_created:
+        create_test_pdf('test_document.pdf')
+        pdf_created = True
+
+# Register cleanup to run on exit (works for both standalone and pytest)
+atexit.register(cleanup_test_pdfs)
 
 
 # Mock PDF path for testing (won't actually be read)
@@ -80,6 +104,8 @@ def test_pattern_syntax():
     """Test pattern syntax validation."""
     print("=== Testing Pattern Syntax ===")
     
+    ensure_test_pdf()
+
     # Note: These tests will fail during actual PDF analysis since we don't have a real PDF,
     # but they should at least parse correctly and attempt to process
     
@@ -135,6 +161,8 @@ def test_pattern_offsets():
     """Test pattern offset syntax."""
     print("=== Testing Pattern Offsets ===")
     
+    ensure_test_pdf()
+
     test_cases = [
         ("contains:'Chapter'+1", "Offset +1 after match"),
         ("contains:'Summary'-2", "Offset -2 before match"),
@@ -203,6 +231,8 @@ def test_invalid_patterns():
 def test_quoted_strings():
     """Test quoted string handling in patterns."""
     print("=== Testing Quoted String Handling ===")
+    
+    ensure_test_pdf()
     
     test_cases = [
         ("contains:'simple text'", "Single quotes"),

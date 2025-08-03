@@ -7,6 +7,8 @@ This is the most advanced functionality requiring the UnifiedBooleanSupervisor.
 """
 
 import sys
+import atexit
+
 from pathlib import Path
 
 # Add the project root to Python path for imports
@@ -18,6 +20,28 @@ from pdf_manipulator.core.page_range.boolean import (
     has_advanced_patterns
     
 )
+
+from test_pdf_utils import create_test_pdf, cleanup_test_pdfs
+
+def setup():
+    create_test_pdf('test_document.pdf')
+
+def teardown():
+    cleanup_test_pdfs()
+
+
+# Module-level setup - runs once when module is imported
+pdf_created = False
+
+def ensure_test_pdf():
+    """Ensure test PDF exists (create only once)."""
+    global pdf_created
+    if not pdf_created:
+        create_test_pdf('test_document.pdf')
+        pdf_created = True
+
+# Register cleanup to run on exit (works for both standalone and pytest)
+atexit.register(cleanup_test_pdfs)
 
 
 # Mock PDF path for testing
@@ -105,6 +129,8 @@ def test_escalation_logic():
 def test_magazine_syntax_validation():
     """Test syntax validation for magazine processing expressions."""
     print("=== Testing Magazine Processing Syntax ===")
+
+    ensure_test_pdf()
     
     test_cases = [
         ("(contains:'Article' to contains:'End') & !type:image", "Basic magazine pattern"),
@@ -183,6 +209,8 @@ def test_rule_enforcement():
 def test_complex_nesting():
     """Test complex nested expressions with parentheses."""
     print("=== Testing Complex Nesting ===")
+    
+    ensure_test_pdf()
     
     test_cases = [
         ("((contains:'A' to contains:'B')) & !type:image", "Double parentheses around range"),

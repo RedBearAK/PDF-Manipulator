@@ -28,8 +28,40 @@ def looks_like_pattern(range_str: str) -> bool:
 
 
 def looks_like_range_pattern(range_str: str) -> bool:
-    """Check if string looks like a range pattern."""
-    return ' to ' in range_str.lower()
+    """Check if string looks like a range pattern, respecting quoted strings."""
+    return _contains_unquoted_text(range_str, ' to ')
+
+def _contains_unquoted_text(text: str, search_text: str) -> bool:
+    """Check if text contains search_text outside of quoted strings."""
+    in_quote = False
+    quote_char = None
+    search_lower = search_text.lower()
+    text_lower = text.lower()
+    
+    i = 0
+    while i <= len(text_lower) - len(search_lower):
+        char = text[i]
+        
+        # Handle escapes
+        if char == '\\' and i + 1 < len(text):
+            i += 2
+            continue
+            
+        # Handle quotes
+        if char in ['"', "'"] and not in_quote:
+            in_quote = True
+            quote_char = char
+        elif char == quote_char and in_quote:
+            in_quote = False
+            quote_char = None
+        elif not in_quote:
+            # Check for search text when not in quotes
+            if text_lower[i:i+len(search_lower)] == search_lower:
+                return True
+        
+        i += 1
+    
+    return False
 
 
 def parse_pattern_expression(expression: str, pdf_path: Path, total_pages: int) -> list[int]:
@@ -39,49 +71,6 @@ def parse_pattern_expression(expression: str, pdf_path: Path, total_pages: int) 
     # (Complex AND/OR logic can be added in Phase 3)
     
     return _parse_single_pattern_with_offset(expression, pdf_path, total_pages)
-
-
-# def parse_range_pattern(expression: str, pdf_path: Path, total_pages: int) -> list[int]:
-#     """
-#     Parse range patterns like 'contains:A to contains:B' or '5 to contains:End'
-    
-#     Supports:
-#     - Pattern to pattern: contains:'Chapter 1' to contains:'Chapter 2'
-#     - Number to pattern: 5 to contains:'Appendix'
-#     - Pattern to number: contains:'Start' to 10
-#     - With offsets: contains:'Ch 1'+1 to contains:'Ch 2'-1
-#     """
-    
-#     # Split on ' to ' (case insensitive)
-#     if ' to ' not in expression.lower():
-#         raise ValueError("Range pattern must contain ' to '")
-    
-#     # Find the ' to ' separator (case insensitive)
-#     lower_expr = expression.lower()
-#     to_pos = lower_expr.find(' to ')
-    
-#     start_expr = expression[:to_pos].strip()
-#     end_expr = expression[to_pos + 4:].strip()  # +4 for ' to '
-    
-#     # Parse start expression
-#     start_pages = parse_single_expression(start_expr, pdf_path, total_pages)
-#     if not start_pages:
-#         raise ValueError(f"No pages found for start pattern: {start_expr}")
-#     start_page = min(start_pages)  # Use first matching page
-    
-#     # Parse end expression  
-#     end_pages = parse_single_expression(end_expr, pdf_path, total_pages)
-#     if not end_pages:
-#         raise ValueError(f"No pages found for end pattern: {end_expr}")
-#     end_page = max(end_pages)  # Use last matching page
-    
-#     if start_page > end_page:
-#         raise ValueError(f"Start page {start_page} is after end page {end_page}")
-    
-#     return list(range(start_page, end_page + 1))
-
-
-# Replace the parse_range_pattern function in patterns.py with this:
 
 
 def parse_range_pattern(expression: str, pdf_path: Path, total_pages: int) -> list[int]:
@@ -110,14 +99,26 @@ def parse_single_expression(expr: str, pdf_path: Path, total_pages: int) -> list
     except ValueError:
         pass
     
+    # Try to parse as number with offset (e.g., "5+1", "10-2")
+    offset_match = re.search(r'^(\d+)([+-]\d+)$', expr)
+    if offset_match:
+        base_num = int(offset_match.group(1))
+        offset = int(offset_match.group(2))
+        target_page = base_num + offset
+        if 1 <= target_page <= total_pages:
+            return [target_page]
+        else:
+            raise ValueError(f"Page {target_page} (from {base_num}{offset:+d}) out of range (1-{total_pages})")
+    
     # Must be a pattern - use existing pattern parsing
     return _parse_single_pattern_with_offset(expr, pdf_path, total_pages)
+
 
 #################################################################################################
 # Private helper functions (used inside module only)
 
 def _parse_single_pattern_with_offset(pattern_str: str, pdf_path: Path, total_pages: int) -> list[int]:
-    """Parse single pattern with optional offset."""
+    """Parse single pattern with optional offset and validate syntax."""
     
     # Parse offset: pattern+N, pattern-N
     offset_match = re.search(r'([+-]\d+)$', pattern_str)
@@ -127,9 +128,37 @@ def _parse_single_pattern_with_offset(pattern_str: str, pdf_path: Path, total_pa
     else:
         offset = 0
         base_pattern = pattern_str
+        
+        # If no valid offset found, check for invalid suffixes
+        if ':' in base_pattern:  # This is a pattern (has type:value)
+            # Find where the quoted value ends
+            if '/i:' in base_pattern:
+                pattern_type, pattern_value = base_pattern.split('/i:', 1)
+            else:
+                pattern_type, pattern_value = base_pattern.split(':', 1)
+            
+            # Check if pattern_value has quotes and what comes after
+            if ((pattern_value.startswith('"') and '"' in pattern_value[1:]) or
+                (pattern_value.startswith("'") and "'" in pattern_value[1:])):
+                
+                # Find end of quoted section
+                quote_char = pattern_value[0]
+                end_quote_pos = pattern_value.find(quote_char, 1)
+                if end_quote_pos > 0:
+                    after_quote = pattern_value[end_quote_pos + 1:].strip()
+                    if after_quote:  # Something after the closing quote
+                        if after_quote == 'to':
+                            raise ValueError("Incomplete range pattern: missing end expression")
+                        elif after_quote.startswith('to'):
+                            raise ValueError("Invalid range syntax: use ' to ' with proper spacing")
+                        else:
+                            raise ValueError(f"Invalid syntax after pattern: '{after_quote}'")
     
     # Get base matches
     base_matches = _parse_base_pattern(base_pattern, pdf_path)
+    
+    # ADD VALIDATION: Check if there's invalid syntax after the pattern
+    _validate_pattern_suffix(pattern_str, base_pattern, offset_match)
     
     # Apply offset
     result_pages = []
@@ -139,6 +168,26 @@ def _parse_single_pattern_with_offset(pattern_str: str, pdf_path: Path, total_pa
             result_pages.append(target_page)
     
     return sorted(list(set(result_pages)))
+
+
+def _validate_pattern_suffix(full_pattern: str, base_pattern: str, offset_match):
+    """Validate that nothing invalid comes after the base pattern."""
+    if offset_match:
+        return  # Offset was valid
+    
+    # Check if there's anything after the base pattern
+    if len(full_pattern) > len(base_pattern):
+        suffix = full_pattern[len(base_pattern):]
+        
+        # Only valid suffixes are offsets (already handled) or range indicators
+        if suffix.startswith(' to '):
+            return  # Valid range start
+        elif suffix == ' to':
+            raise ValueError("Incomplete range pattern: missing end expression")
+        elif suffix.startswith('to'):
+            raise ValueError("Invalid range syntax: missing space before 'to'")
+        else:
+            raise ValueError(f"Invalid syntax after pattern: '{suffix}'")
 
 
 def _parse_base_pattern(pattern: str, pdf_path: Path) -> list[int]:
@@ -159,11 +208,15 @@ def _parse_base_pattern(pattern: str, pdf_path: Path) -> list[int]:
         (pattern_value.startswith("'") and pattern_value.endswith("'"))):
         pattern_value = pattern_value[1:-1]  # Remove quotes
     
+    if not pattern_value.strip():
+        raise ValueError(f"Empty pattern value for {pattern_type}")
+    
     # Find matching pages
     return _find_pages_by_pattern(pdf_path, pattern_type, pattern_value, case_sensitive)
 
 
-def _find_pages_by_pattern(pdf_path: Path, pattern_type: str, pattern_value: str, case_sensitive: bool) -> list[int]:
+def _find_pages_by_pattern(pdf_path: Path, pattern_type: str, pattern_value: str, 
+                            case_sensitive: bool) -> list[int]:
     """Find pages matching a specific pattern."""
     
     matching_pages = []
@@ -245,14 +298,32 @@ def _find_pages_by_size(pdf_path: Path, size_condition: str) -> list[int]:
         raise ValueError(f"Error analyzing page sizes: {e}")
 
 
-
-def parse_range_pattern_with_groups(expression: str, pdf_path: Path, total_pages: int) -> tuple[list[int], list]:
+def parse_range_pattern_with_groups(expression: str, pdf_path: Path, 
+                                    total_pages: int) -> tuple[list[int], list]:
     """
     Parse range patterns and return both pages and the logical section groups.
     
     Returns:
         Tuple of (all_pages, section_groups) where section_groups is a list of PageGroup objects
     """
+    
+    # Strip outer parentheses if present
+    expression = expression.strip()
+    if expression.startswith('(') and expression.endswith(')'):
+        # Check if these are the outermost parentheses
+        paren_count = 0
+        is_outermost = True
+        for i, char in enumerate(expression[1:-1], 1):  # Skip first and last char
+            if char == '(':
+                paren_count += 1
+            elif char == ')':
+                paren_count -= 1
+                if paren_count < 0:  # Closing paren before we close the outer one
+                    is_outermost = False
+                    break
+        
+        if is_outermost and paren_count == 0:
+            expression = expression[1:-1].strip()  # Remove outer parentheses
     
     # Split on ' to ' (case insensitive)
     if ' to ' not in expression.lower():
@@ -264,6 +335,11 @@ def parse_range_pattern_with_groups(expression: str, pdf_path: Path, total_pages
     
     start_expr = expression[:to_pos].strip()
     end_expr = expression[to_pos + 4:].strip()  # +4 for ' to '
+    
+    if not start_expr:
+        raise ValueError("Missing start pattern in range")
+    if not end_expr:
+        raise ValueError("Missing end pattern in range")
     
     # Parse start and end expressions
     start_pages = parse_single_expression(start_expr, pdf_path, total_pages)

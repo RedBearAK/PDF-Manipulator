@@ -7,6 +7,7 @@ Does NOT test boolean combinations with range patterns (that's in test_magazine_
 """
 
 import sys
+import atexit
 
 from pathlib import Path
 
@@ -15,6 +16,28 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from pdf_manipulator.core.parser import parse_page_range
 from pdf_manipulator.core.page_range.patterns import looks_like_range_pattern
+
+from test_pdf_utils import create_test_pdf, cleanup_test_pdfs
+
+def setup():
+    create_test_pdf('test_document.pdf')
+
+def teardown():
+    cleanup_test_pdfs()
+
+
+# Module-level setup - runs once when module is imported
+pdf_created = False
+
+def ensure_test_pdf():
+    """Ensure test PDF exists (create only once)."""
+    global pdf_created
+    if not pdf_created:
+        create_test_pdf('test_document.pdf')
+        pdf_created = True
+
+# Register cleanup to run on exit (works for both standalone and pytest)
+atexit.register(cleanup_test_pdfs)
 
 
 # Mock PDF path for testing
@@ -67,6 +90,8 @@ def test_range_pattern_syntax():
     """Test various range pattern syntax combinations."""
     print("=== Testing Range Pattern Syntax ===")
     
+    ensure_test_pdf()
+
     test_cases = [
         ("contains:'Chapter 1' to contains:'Chapter 2'", "Basic pattern to pattern"),
         ("5 to contains:'Appendix'", "Number to pattern"),
@@ -110,6 +135,8 @@ def test_range_pattern_syntax():
 def test_range_pattern_offsets():
     """Test range patterns with offset modifiers."""
     print("=== Testing Range Pattern Offsets ===")
+    
+    ensure_test_pdf()
     
     test_cases = [
         ("contains:'Chapter 1'+1 to contains:'Chapter 2'", "Start offset +1"),

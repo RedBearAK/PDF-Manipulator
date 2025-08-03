@@ -7,12 +7,35 @@ Does NOT test advanced range patterns ("X to Y").
 """
 
 import sys
+import atexit
+
 from pathlib import Path
 
 # Add the project root to Python path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
 from pdf_manipulator.core.page_range.boolean import looks_like_boolean_expression, parse_boolean_expression
+
+from test_pdf_utils import create_test_pdf, cleanup_test_pdfs
+
+def setup():
+    create_test_pdf('test_document.pdf')
+
+def teardown():
+    cleanup_test_pdfs()
+
+# Module-level setup - runs once when module is imported
+pdf_created = False
+
+def ensure_test_pdf():
+    """Ensure test PDF exists (create only once)."""
+    global pdf_created
+    if not pdf_created:
+        create_test_pdf('test_document.pdf')
+        pdf_created = True
+
+# Register cleanup to run on exit (works for both standalone and pytest)
+atexit.register(cleanup_test_pdfs)
 
 
 # Mock PDF path for testing
@@ -169,6 +192,8 @@ def test_quote_awareness():
 def test_simple_boolean_parsing():
     """Test parsing of simple boolean expressions (syntax only)."""
     print("=== Testing Simple Boolean Parsing ===")
+    
+    ensure_test_pdf()
     
     # Note: These will fail during PDF analysis but should parse correctly
     
