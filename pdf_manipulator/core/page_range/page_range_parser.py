@@ -2,7 +2,7 @@ import re
 
 from pathlib import Path
 from rich.console import Console
-from dataclasses import dataclass
+# from dataclasses import dataclass
 
 from pdf_manipulator.core.page_range.utils import (
     create_pattern_description, create_boolean_description)
@@ -11,7 +11,7 @@ from pdf_manipulator.core.page_range.patterns import (
     looks_like_pattern,
     looks_like_range_pattern,
     parse_pattern_expression,
-    parse_range_pattern
+    # parse_range_pattern
 )
 
 from pdf_manipulator.core.page_range.boolean import (
@@ -19,13 +19,15 @@ from pdf_manipulator.core.page_range.boolean import (
     parse_boolean_expression
 )
 
+from pdf_manipulator.core.page_range.page_group import PageGroup
 console = Console()
 
-@dataclass
-class PageGroup:
-    pages: list[int]
-    is_range: bool
-    original_spec: str
+
+# @dataclass
+# class PageGroup:
+#     pages: list[int]
+#     is_range: bool
+#     original_spec: str
 
 
 class PageRangeParser:
@@ -266,6 +268,55 @@ class PageRangeParser:
         
         return self.pages, desc, self.groups
     
+    # def _try_advanced_patterns(self, range_str: str) -> tuple[set[int], str, list[PageGroup]] | None:
+    #     """Try boolean expressions, range patterns, and single patterns."""
+        
+    #     # Boolean expressions: "contains:'A' & contains:'B'" or "all & !contains:'DRAFT'"
+    #     if looks_like_boolean_expression(range_str):
+    #         try:
+    #             matching_pages = parse_boolean_expression(range_str, self.pdf_path, self.total_pages)
+    #             # Always return boolean results, even if empty (empty is a valid result)
+    #             pages = set(matching_pages)
+    #             desc = create_boolean_description(range_str)
+    #             # groups = [PageGroup(list(pages), True, range_str)]
+    #             groups = self._create_consecutive_groups(list(pages), range_str)
+    #             return pages, desc, groups
+    #         except ValueError as e:
+    #             # Boolean pattern was recognized but parsing failed (syntax error, etc.)
+    #             raise ValueError(f"Boolean expression error: {e}")
+        
+    #     # Range patterns: "contains:'A' to contains:'B'"
+    #     if looks_like_range_pattern(range_str):
+    #         try:
+    #             matching_pages = parse_range_pattern(range_str, self.pdf_path, self.total_pages)
+    #             # Always return range results, even if empty (empty is a valid result)
+    #             pages = set(matching_pages)
+    #             desc = f"range-{min(pages)}-{max(pages)}" if pages else "range-empty"
+    #             # groups = [PageGroup(list(pages), True, range_str)]
+    #             # Redundant because this should be a range (already consecutive group)
+    #             groups = self._create_consecutive_groups(list(pages), range_str)
+    #             return pages, desc, groups
+    #         except ValueError as e:
+    #             # Range pattern was recognized but parsing failed (syntax error, etc.)
+    #             raise ValueError(f"Range pattern error: {e}")
+        
+    #     # Single patterns: "contains:'text'", "type:image", "size:>1MB"
+    #     if looks_like_pattern(range_str):
+    #         try:
+    #             matching_pages = parse_pattern_expression(range_str, self.pdf_path, self.total_pages)
+    #             # Always return pattern results, even if empty (empty is a valid result)
+    #             pages = set(matching_pages)
+    #             desc = create_pattern_description(range_str)
+    #             # groups = [PageGroup(list(pages), True, range_str)]
+    #             groups = self._create_consecutive_groups(list(pages), range_str)
+    #             return pages, desc, groups
+    #         except ValueError as e:
+    #             # Pattern was recognized but parsing failed (syntax error, etc.)
+    #             raise ValueError(f"Pattern error: {e}")
+        
+    #     # No advanced pattern recognized - continue with normal page range parsing
+    #     return None
+
     def _try_advanced_patterns(self, range_str: str) -> tuple[set[int], str, list[PageGroup]] | None:
         """Try boolean expressions, range patterns, and single patterns."""
         
@@ -276,24 +327,23 @@ class PageRangeParser:
                 # Always return boolean results, even if empty (empty is a valid result)
                 pages = set(matching_pages)
                 desc = create_boolean_description(range_str)
-                # groups = [PageGroup(list(pages), True, range_str)]
                 groups = self._create_consecutive_groups(list(pages), range_str)
                 return pages, desc, groups
             except ValueError as e:
                 # Boolean pattern was recognized but parsing failed (syntax error, etc.)
                 raise ValueError(f"Boolean expression error: {e}")
         
-        # Range patterns: "contains:'A' to contains:'B'"
+        # Range patterns: "contains:'A' to contains:'B'" - FIXED to find all sections
         if looks_like_range_pattern(range_str):
             try:
-                matching_pages = parse_range_pattern(range_str, self.pdf_path, self.total_pages)
+                from pdf_manipulator.core.page_range.patterns import parse_range_pattern_with_groups
+                matching_pages, section_groups = parse_range_pattern_with_groups(
+                                                    range_str, self.pdf_path, self.total_pages)
                 # Always return range results, even if empty (empty is a valid result)
                 pages = set(matching_pages)
-                desc = f"range-{min(pages)}-{max(pages)}" if pages else "range-empty"
-                # groups = [PageGroup(list(pages), True, range_str)]
-                # Redundant because this should be a range (already consecutive group)
-                groups = self._create_consecutive_groups(list(pages), range_str)
-                return pages, desc, groups
+                desc = f"sections-{len(section_groups)}" if section_groups else "sections-empty"
+                # Use the section groups directly instead of consecutive grouping
+                return pages, desc, section_groups
             except ValueError as e:
                 # Range pattern was recognized but parsing failed (syntax error, etc.)
                 raise ValueError(f"Range pattern error: {e}")
@@ -305,7 +355,6 @@ class PageRangeParser:
                 # Always return pattern results, even if empty (empty is a valid result)
                 pages = set(matching_pages)
                 desc = create_pattern_description(range_str)
-                # groups = [PageGroup(list(pages), True, range_str)]
                 groups = self._create_consecutive_groups(list(pages), range_str)
                 return pages, desc, groups
             except ValueError as e:
@@ -314,3 +363,113 @@ class PageRangeParser:
         
         # No advanced pattern recognized - continue with normal page range parsing
         return None
+
+
+def apply_boundary_detection(groups: list[PageGroup], start_pattern: str, end_pattern: str, 
+                            pdf_path: Path, total_pages: int) -> list[PageGroup]:
+    """
+    Split existing groups at boundary points using pattern matching.
+    
+    Args:
+        groups: Existing PageGroup objects to split
+        start_pattern: Pattern for starting new groups (e.g., "contains:'Chapter'")
+        end_pattern: Pattern for ending current groups (e.g., "contains:'Summary'")
+        pdf_path: PDF file path for pattern matching
+        total_pages: Total pages in PDF
+        
+    Returns:
+        New list of PageGroup objects split at boundaries
+    """
+    from pdf_manipulator.core.page_range.patterns import parse_pattern_expression
+    
+    # Find boundary pages using existing pattern matching
+    start_pages = set()
+    if start_pattern:
+        try:
+            start_pages = set(parse_pattern_expression(start_pattern, pdf_path, total_pages))
+        except ValueError as e:
+            raise ValueError(f"Invalid start boundary pattern: {e}")
+    
+    end_pages = set()
+    if end_pattern:
+        try:
+            end_pages = set(parse_pattern_expression(end_pattern, pdf_path, total_pages))
+        except ValueError as e:
+            raise ValueError(f"Invalid end boundary pattern: {e}")
+    
+    # Split each group at boundary points
+    new_groups = []
+    for group in groups:
+        new_groups.extend(_split_group_at_boundaries(group, start_pages, end_pages))
+    
+    return new_groups
+
+
+def _split_group_at_boundaries(group: PageGroup, start_pages: set[int], 
+                                end_pages: set[int]) -> list[PageGroup]:
+    """
+    Split a single group at boundary points.
+    
+    Args:
+        group: PageGroup to split
+        start_pages: Pages that start new groups
+        end_pages: Pages that end current groups
+        
+    Returns:
+        List of new PageGroup objects
+    """
+    if not group.pages:
+        return [group]
+    
+    # Sort pages to process sequentially
+    sorted_pages = sorted(group.pages)
+    groups = []
+    current_group_pages = []
+    
+    for page in sorted_pages:
+        # Check if this page ends the current group
+        if page in end_pages and current_group_pages:
+            # End current group (inclusive - include the end page)
+            current_group_pages.append(page)
+            groups.append(_create_boundary_group(current_group_pages, group.original_spec))
+            current_group_pages = []
+            continue
+        
+        # Check if this page starts a new group
+        if page in start_pages:
+            # Start new group (finish current group first if it has pages)
+            if current_group_pages:
+                groups.append(_create_boundary_group(current_group_pages, group.original_spec))
+                current_group_pages = []
+            # Start new group with this page
+            current_group_pages = [page]
+        else:
+            # Regular page - add to current group
+            current_group_pages.append(page)
+    
+    # Don't forget the final group
+    if current_group_pages:
+        groups.append(_create_boundary_group(current_group_pages, group.original_spec))
+    
+    return groups if groups else [group]  # Return original if no splits occurred
+
+
+def _create_boundary_group(pages: list[int], original_spec: str) -> PageGroup:
+    """Create a PageGroup from boundary-split pages."""
+    if not pages:
+        return PageGroup([], False, original_spec)
+    
+    if len(pages) == 1:
+        return PageGroup(pages, False, f"page{pages[0]}")
+    else:
+        # Check if consecutive
+        sorted_pages = sorted(pages)
+        is_consecutive = all(sorted_pages[i] == sorted_pages[i-1] + 1 for i in range(1, len(sorted_pages)))
+        
+        if is_consecutive:
+            spec = f"pages{sorted_pages[0]}-{sorted_pages[-1]}"
+            return PageGroup(pages, True, spec)
+        else:
+            # Non-consecutive - create a grouped spec
+            spec = f"pages{','.join(map(str, sorted(pages)))}"
+            return PageGroup(pages, True, spec)

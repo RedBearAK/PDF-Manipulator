@@ -11,6 +11,7 @@ from rich.console import Console
 
 from pdf_manipulator.core.page_analysis import PageAnalyzer
 from pdf_manipulator.core.warning_suppression import suppress_pdf_warnings
+from pdf_manipulator.core.page_range.page_group import PageGroup
 
 
 console = Console()
@@ -40,44 +41,60 @@ def parse_pattern_expression(expression: str, pdf_path: Path, total_pages: int) 
     return _parse_single_pattern_with_offset(expression, pdf_path, total_pages)
 
 
+# def parse_range_pattern(expression: str, pdf_path: Path, total_pages: int) -> list[int]:
+#     """
+#     Parse range patterns like 'contains:A to contains:B' or '5 to contains:End'
+    
+#     Supports:
+#     - Pattern to pattern: contains:'Chapter 1' to contains:'Chapter 2'
+#     - Number to pattern: 5 to contains:'Appendix'
+#     - Pattern to number: contains:'Start' to 10
+#     - With offsets: contains:'Ch 1'+1 to contains:'Ch 2'-1
+#     """
+    
+#     # Split on ' to ' (case insensitive)
+#     if ' to ' not in expression.lower():
+#         raise ValueError("Range pattern must contain ' to '")
+    
+#     # Find the ' to ' separator (case insensitive)
+#     lower_expr = expression.lower()
+#     to_pos = lower_expr.find(' to ')
+    
+#     start_expr = expression[:to_pos].strip()
+#     end_expr = expression[to_pos + 4:].strip()  # +4 for ' to '
+    
+#     # Parse start expression
+#     start_pages = parse_single_expression(start_expr, pdf_path, total_pages)
+#     if not start_pages:
+#         raise ValueError(f"No pages found for start pattern: {start_expr}")
+#     start_page = min(start_pages)  # Use first matching page
+    
+#     # Parse end expression  
+#     end_pages = parse_single_expression(end_expr, pdf_path, total_pages)
+#     if not end_pages:
+#         raise ValueError(f"No pages found for end pattern: {end_expr}")
+#     end_page = max(end_pages)  # Use last matching page
+    
+#     if start_page > end_page:
+#         raise ValueError(f"Start page {start_page} is after end page {end_page}")
+    
+#     return list(range(start_page, end_page + 1))
+
+
+# Replace the parse_range_pattern function in patterns.py with this:
+
+
 def parse_range_pattern(expression: str, pdf_path: Path, total_pages: int) -> list[int]:
     """
-    Parse range patterns like 'contains:A to contains:B' or '5 to contains:End'
+    Parse range patterns like 'contains:A to contains:B' and find ALL matching sections.
     
-    Supports:
-    - Pattern to pattern: contains:'Chapter 1' to contains:'Chapter 2'
-    - Number to pattern: 5 to contains:'Appendix'
-    - Pattern to number: contains:'Start' to 10
-    - With offsets: contains:'Ch 1'+1 to contains:'Ch 2'-1
+    FIXED: Now finds all A...B pairs, not just first A to last B.
+    
+    This is the backward-compatible version that just returns pages.
+    For grouping information, use parse_range_pattern_with_groups().
     """
-    
-    # Split on ' to ' (case insensitive)
-    if ' to ' not in expression.lower():
-        raise ValueError("Range pattern must contain ' to '")
-    
-    # Find the ' to ' separator (case insensitive)
-    lower_expr = expression.lower()
-    to_pos = lower_expr.find(' to ')
-    
-    start_expr = expression[:to_pos].strip()
-    end_expr = expression[to_pos + 4:].strip()  # +4 for ' to '
-    
-    # Parse start expression
-    start_pages = parse_single_expression(start_expr, pdf_path, total_pages)
-    if not start_pages:
-        raise ValueError(f"No pages found for start pattern: {start_expr}")
-    start_page = min(start_pages)  # Use first matching page
-    
-    # Parse end expression  
-    end_pages = parse_single_expression(end_expr, pdf_path, total_pages)
-    if not end_pages:
-        raise ValueError(f"No pages found for end pattern: {end_expr}")
-    end_page = max(end_pages)  # Use last matching page
-    
-    if start_page > end_page:
-        raise ValueError(f"Start page {start_page} is after end page {end_page}")
-    
-    return list(range(start_page, end_page + 1))
+    all_pages, _ = parse_range_pattern_with_groups(expression, pdf_path, total_pages)
+    return all_pages
 
 
 def parse_single_expression(expr: str, pdf_path: Path, total_pages: int) -> list[int]:
@@ -226,3 +243,76 @@ def _find_pages_by_size(pdf_path: Path, size_condition: str) -> list[int]:
         
     except Exception as e:
         raise ValueError(f"Error analyzing page sizes: {e}")
+
+
+
+def parse_range_pattern_with_groups(expression: str, pdf_path: Path, total_pages: int) -> tuple[list[int], list]:
+    """
+    Parse range patterns and return both pages and the logical section groups.
+    
+    Returns:
+        Tuple of (all_pages, section_groups) where section_groups is a list of PageGroup objects
+    """
+    
+    # Split on ' to ' (case insensitive)
+    if ' to ' not in expression.lower():
+        raise ValueError("Range pattern must contain ' to '")
+    
+    # Find the ' to ' separator (case insensitive)
+    lower_expr = expression.lower()
+    to_pos = lower_expr.find(' to ')
+    
+    start_expr = expression[:to_pos].strip()
+    end_expr = expression[to_pos + 4:].strip()  # +4 for ' to '
+    
+    # Parse start and end expressions
+    start_pages = parse_single_expression(start_expr, pdf_path, total_pages)
+    if not start_pages:
+        raise ValueError(f"No pages found for start pattern: {start_expr}")
+    
+    end_pages = parse_single_expression(end_expr, pdf_path, total_pages)
+    if not end_pages:
+        raise ValueError(f"No pages found for end pattern: {end_expr}")
+    
+    # Find all start-to-end sections and create PageGroups
+    
+    sections = []
+    section_groups = []
+    used_ends = set()
+    
+    for start_page in sorted(start_pages):
+        # Find next end page after this start (that hasn't been used)
+        next_end = None
+        for end_page in sorted(end_pages):
+            if end_page >= start_page and end_page not in used_ends:
+                next_end = end_page
+                break
+        
+        if next_end is not None:
+            # Create section from start to end (inclusive)
+            section_pages = list(range(start_page, next_end + 1))
+            sections.append(section_pages)
+            used_ends.add(next_end)
+            
+            # Create PageGroup for this section
+            if len(section_pages) == 1:
+                group_spec = f"page{section_pages[0]}"
+                section_groups.append(PageGroup(section_pages, False, group_spec))
+            else:
+                group_spec = f"pages{section_pages[0]}-{section_pages[-1]}"
+                section_groups.append(PageGroup(section_pages, True, group_spec))
+        else:
+            # Start page with no valid end - create single-page section
+            sections.append([start_page])
+            group_spec = f"page{start_page}"
+            section_groups.append(PageGroup([start_page], False, group_spec))
+    
+    # Flatten all sections into single list of pages
+    all_pages = []
+    for section in sections:
+        all_pages.extend(section)
+    
+    if not all_pages:
+        raise ValueError(f"No valid sections found from {start_expr} to {end_expr}")
+    
+    return all_pages, section_groups
