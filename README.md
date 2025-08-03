@@ -22,7 +22,7 @@ PDF Manipulator is a powerful command-line tool that goes beyond simple page ext
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/pdf-manipulator.git
+git clone https://github.com/RedBearAK/PDF-Manipulator.git
 cd pdf-manipulator
 
 # Install dependencies
