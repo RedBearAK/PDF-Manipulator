@@ -67,7 +67,7 @@ def _create_optimized_writer_from_pages(reader: PdfReader, page_indices: list[in
                 for img in page.images:
                     # Try to reduce image quality to save space
                     try:
-                        img.replace(img.image, quality=60)  # More aggressive compression
+                        # img.replace(img.image, quality=60)  # More aggressive compression
                         images_to_keep.append(img)
                     except Exception:
                         # If we can't compress, at least keep the image

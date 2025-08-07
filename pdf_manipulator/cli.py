@@ -247,6 +247,10 @@ def main():
         help='Extract pages as separate documents (one file per page). Default: single document')
     extraction.add_argument('--respect-groups', action='store_true',
         help='Respect comma-separated groupings: ranges→multi-page files, individuals→single files')
+    # extraction.add_argument('--preserve-image-quality', action='store_true', default=True,
+    #     help='Preserve original image quality during extraction (default: enabled)')
+    # extraction.add_argument('--aggressive-optimization', action='store_true',
+    #     help='Use aggressive optimization that may affect image quality but reduces file size')
 
     # Group filtering and boundary options (add after extraction group)
     filtering = parser.add_argument_group('group filtering and boundaries')
