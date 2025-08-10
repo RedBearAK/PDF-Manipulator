@@ -103,8 +103,12 @@ def extract_pages(pdf_path: Path, page_range: str) -> tuple[Path, float]:
             total_pages = len(reader.pages)
 
             # Parse the page range
-            # pages_to_extract, range_desc, groups = parse_page_range(page_range, total_pages)
             pages_to_extract, range_desc, groups = parse_page_range(page_range, total_pages, pdf_path)
+
+            # Check if any pages were found
+            if not pages_to_extract:
+                console.print(f"[yellow]No pages found matching pattern: {page_range}[/yellow]")
+                return None, 0
 
             # Sort pages for output
             sorted_pages = sorted(pages_to_extract)
@@ -150,8 +154,13 @@ def extract_pages_separate(pdf_path: Path, page_range: str, remove_images: bool 
             reader = PdfReader(pdf_path)
             total_pages = len(reader.pages)
 
-            # Parse the page range
-            pages_to_extract, range_desc, groups = parse_page_range(page_range, total_pages)
+            # Parse the page range - FIXED: Added missing pdf_path argument
+            pages_to_extract, range_desc, groups = parse_page_range(page_range, total_pages, pdf_path)
+
+            # Check if any pages were found
+            if not pages_to_extract:
+                console.print(f"[yellow]No pages found matching pattern: {page_range}[/yellow]")
+                return []
 
             # Sort pages for output
             sorted_pages = sorted(pages_to_extract)
@@ -232,8 +241,13 @@ def extract_pages_grouped(pdf_path: Path, page_range: str) -> list[tuple[Path, f
         total_pages = len(reader.pages)
 
         # Parse with grouping information
-        # pages_to_extract, range_desc, groups = parse_page_range(page_range, total_pages)
         pages_to_extract, range_desc, groups = parse_page_range(page_range, total_pages, pdf_path)
+        
+        # Check if any pages were found
+        if not pages_to_extract:
+            console.print(f"[yellow]No pages found matching pattern: {page_range}[/yellow]")
+            return []
+
         output_files = []
 
         # Determine padding for filenames
