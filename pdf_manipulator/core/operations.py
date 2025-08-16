@@ -1,4 +1,13 @@
-"""Core PDF manipulation operations with resource optimization and file conflict handling."""
+"""
+Enhanced PDF manipulation operations with intelligent filename generation.
+File: pdf_manipulator/core/operations.py
+
+PHASE 2 ENHANCEMENTS:
+- Smart filename generation using pattern extraction and templates
+- Graceful fallback to original naming when extraction fails
+- Support for dry-run with real pattern extraction
+- Backward compatibility maintained for all existing functionality
+"""
 
 import argparse
 
@@ -8,6 +17,7 @@ from rich.console import Console
 
 from pdf_manipulator.core.parser import parse_page_range
 from pdf_manipulator.core.warning_suppression import suppress_pdf_warnings
+from pdf_manipulator.renamer.filename_generator import FilenameGenerator
 
 
 console = Console()
@@ -24,7 +34,6 @@ class MalformedPDFError(PDFManipulatorError):
 class ExtractionError(PDFManipulatorError):
     """Exception for page extraction errors."""
     pass
-
 
 
 def _get_unique_filename(base_path: Path) -> Path:
@@ -88,14 +97,66 @@ def _create_optimized_writer_from_pages(reader: PdfReader, page_indices: list[in
     return writer
 
 
+def _generate_smart_filename(pdf_path: Path, range_desc: str,
+                           patterns: list[str] = None, template: str = None,
+                           source_page: int = 1, dry_run: bool = False) -> tuple[Path, dict]:
+    """
+    Generate intelligent filename using pattern extraction and templates.
+    
+    PHASE 2: New smart filename generation with graceful fallback.
+    
+    Args:
+        pdf_path: Original PDF file path
+        range_desc: Description of extracted page range
+        patterns: List of compact pattern strings
+        template: Filename template string
+        source_page: Page to extract patterns from
+        dry_run: Whether this is a dry-run (affects extraction)
+        
+    Returns:
+        Tuple of (output_path, extraction_results)
+    """
+    if not patterns or not template:
+        # No smart naming - use traditional approach
+        base_output_path = pdf_path.parent / f"{pdf_path.stem}_{range_desc}.pdf"
+        return _get_unique_filename(base_output_path), {'fallback_used': True}
+    
+    try:
+        generator = FilenameGenerator()
+        return generator.generate_smart_filename(
+            pdf_path, range_desc, patterns, template, source_page, dry_run
+        )
+    except Exception as e:
+        console.print(f"[yellow]Smart filename generation failed ({e}), using simple naming[/yellow]")
+        base_output_path = pdf_path.parent / f"{pdf_path.stem}_{range_desc}.pdf"
+        return _get_unique_filename(base_output_path), {'fallback_used': True, 'error': str(e)}
+
+
 def process_folder_operations(args: argparse.Namespace, pdf_files: list[tuple[Path, int, float]]):
     """Delegate to folder operations module."""
     from .folder_operations import handle_folder_operations
     handle_folder_operations(args, pdf_files)
 
 
-def extract_pages(pdf_path: Path, page_range: str) -> tuple[Path, float]:
-    """Extract specified pages from PDF as a single document."""
+def extract_pages(pdf_path: Path, page_range: str, patterns: list[str] = None,
+                 template: str = None, source_page: int = 1, 
+                 dry_run: bool = False) -> tuple[Path, float]:
+    """
+    Extract specified pages from PDF as a single document.
+    
+    PHASE 2 ENHANCED: Now supports smart filename generation.
+    
+    Args:
+        pdf_path: Path to source PDF
+        page_range: Range specification for pages to extract
+        patterns: Optional list of pattern strings for content extraction
+        template: Optional filename template
+        source_page: Page to extract patterns from (default: 1)
+        dry_run: Whether this is a dry-run preview
+        
+    Returns:
+        Tuple of (output_path, file_size_mb)
+    """
     
     try:
         with suppress_pdf_warnings(show_summary=True):
@@ -113,9 +174,25 @@ def extract_pages(pdf_path: Path, page_range: str) -> tuple[Path, float]:
             # Sort pages for output
             sorted_pages = sorted(pages_to_extract)
 
-            # Create output filename with conflict handling
-            base_output_path = pdf_path.parent / f"{pdf_path.stem}_{range_desc}.pdf"
-            output_path = _get_unique_filename(base_output_path)
+            # PHASE 2: Generate smart filename
+            output_path, extraction_results = _generate_smart_filename(
+                pdf_path, range_desc, patterns, template, source_page, dry_run
+            )
+
+            # Show extraction results if patterns were used
+            if patterns and template and not extraction_results.get('fallback_used', False):
+                console.print(f"[green]Smart filename: {output_path.name}[/green]")
+                if extraction_results.get('variables_extracted'):
+                    for var, value in extraction_results['variables_extracted'].items():
+                        if value:
+                            console.print(f"[dim]  {var}: {value}[/dim]")
+
+            # Handle dry-run
+            if dry_run:
+                estimated_size = (pdf_path.stat().st_size * len(sorted_pages) / total_pages) / (1024 * 1024)
+                console.print(f"[blue]DRY RUN: Would extract {len(sorted_pages)} pages as {output_path.name}[/blue]")
+                console.print(f"[dim]Estimated size: {estimated_size:.1f} MB[/dim]")
+                return output_path, estimated_size
 
             # Create optimized writer
             page_indices = [p - 1 for p in sorted_pages]  # Convert to 0-indexed
@@ -133,8 +210,6 @@ def extract_pages(pdf_path: Path, page_range: str) -> tuple[Path, float]:
             new_size = output_path.stat().st_size / (1024 * 1024)
 
             console.print(f"[green]✓ Extracted {len(sorted_pages)} pages: {', '.join(map(str, sorted_pages))}[/green]")
-            if output_path != base_output_path:
-                console.print(f"[yellow]Note: Saved as {output_path.name} to avoid overwriting existing file[/yellow]")
 
             return output_path, new_size
 
@@ -146,15 +221,33 @@ def extract_pages(pdf_path: Path, page_range: str) -> tuple[Path, float]:
         return None, 0
 
 
-def extract_pages_separate(pdf_path: Path, page_range: str, remove_images: bool = False) -> list[tuple[Path, float]]:
-    """Extract specified pages from PDF as separate documents with resource optimization."""
+def extract_pages_separate(pdf_path: Path, page_range: str, patterns: list[str] = None,
+                          template: str = None, source_page: int = 1,
+                          dry_run: bool = False, remove_images: bool = False) -> list[tuple[Path, float]]:
+    """
+    Extract specified pages from PDF as separate documents.
+    
+    PHASE 2 ENHANCED: Now supports smart filename generation for each page.
+    
+    Args:
+        pdf_path: Path to source PDF
+        page_range: Range specification for pages to extract
+        patterns: Optional list of pattern strings for content extraction
+        template: Optional filename template (modified for individual pages)
+        source_page: Page to extract patterns from (default: 1)
+        dry_run: Whether this is a dry-run preview
+        remove_images: Whether to remove images for size reduction
+        
+    Returns:
+        List of (output_path, file_size_mb) tuples
+    """
     
     try:
         with suppress_pdf_warnings(show_summary=True):
             reader = PdfReader(pdf_path)
             total_pages = len(reader.pages)
 
-            # Parse the page range - FIXED: Added missing pdf_path argument
+            # Parse the page range
             pages_to_extract, range_desc, groups = parse_page_range(page_range, total_pages, pdf_path)
 
             # Check if any pages were found
@@ -183,14 +276,65 @@ def extract_pages_separate(pdf_path: Path, page_range: str, remove_images: bool 
             # Determine zero padding for filenames
             padding = len(str(max(sorted_pages)))
 
+            # PHASE 2: Extract pattern content once (if using smart naming)
+            extraction_results = {}
+            if patterns and template:
+                try:
+                    generator = FilenameGenerator()
+                    _, extraction_results = generator.generate_smart_filename(
+                        pdf_path, range_desc, patterns, template, source_page, dry_run=True
+                    )
+                    
+                    if not extraction_results.get('fallback_used', False):
+                        console.print(f"[green]Smart naming: extracted content from page {source_page}[/green]")
+                        for var, value in extraction_results.get('variables_extracted', {}).items():
+                            if value:
+                                console.print(f"[dim]  {var}: {value}[/dim]")
+                except Exception as e:
+                    console.print(f"[yellow]Pattern extraction failed ({e}), using simple naming[/yellow]")
+                    extraction_results = {'fallback_used': True}
+
             for page_num in sorted_pages:
-                # Create filename for this page with conflict handling
+                # Create filename for this page
                 page_str = str(page_num).zfill(padding)
-                if remove_images:
-                    base_output_path = pdf_path.parent / f"{pdf_path.stem}_page{page_str}_text.pdf"
+                
+                if patterns and template and not extraction_results.get('fallback_used', False):
+                    # Use smart naming with page number
+                    try:
+                        generator = FilenameGenerator()
+                        
+                        # Modify template to include page number
+                        if '{range}' in template:
+                            page_template = template.replace('{range}', page_str)
+                        else:
+                            # Add page number to template
+                            base_template = template.replace('.pdf', f'_page{page_str}.pdf')
+                            page_template = base_template
+                        
+                        output_path, _ = generator.generate_smart_filename(
+                            pdf_path, page_str, patterns, page_template, source_page, dry_run
+                        )
+                    except Exception:
+                        # Fallback to simple naming
+                        if remove_images:
+                            base_output_path = pdf_path.parent / f"{pdf_path.stem}_page{page_str}_text.pdf"
+                        else:
+                            base_output_path = pdf_path.parent / f"{pdf_path.stem}_page{page_str}.pdf"
+                        output_path = _get_unique_filename(base_output_path)
                 else:
-                    base_output_path = pdf_path.parent / f"{pdf_path.stem}_page{page_str}.pdf"
-                output_path = _get_unique_filename(base_output_path)
+                    # Simple naming
+                    if remove_images:
+                        base_output_path = pdf_path.parent / f"{pdf_path.stem}_page{page_str}_text.pdf"
+                    else:
+                        base_output_path = pdf_path.parent / f"{pdf_path.stem}_page{page_str}.pdf"
+                    output_path = _get_unique_filename(base_output_path)
+
+                # Handle dry-run
+                if dry_run:
+                    estimated_size = (pdf_path.stat().st_size / total_pages) / (1024 * 1024)
+                    console.print(f"[blue]DRY RUN: Would extract page {page_num} as {output_path.name}[/blue]")
+                    output_files.append((output_path, estimated_size))
+                    continue
 
                 # Create optimized writer for single page
                 writer = _create_optimized_writer_from_pages(reader, [page_num - 1])
@@ -215,10 +359,9 @@ def extract_pages_separate(pdf_path: Path, page_range: str, remove_images: bool 
                 file_size = output_path.stat().st_size / (1024 * 1024)
                 output_files.append((output_path, file_size))
 
-                if output_path != base_output_path:
-                    console.print(f"[yellow]Note: Page {page_num} saved as {output_path.name} to avoid overwriting[/yellow]")
-
-            if remove_images:
+            if dry_run:
+                console.print(f"[blue]DRY RUN: Would create {len(output_files)} separate files[/blue]")
+            elif remove_images:
                 console.print(f"[green]✓ Extracted {len(sorted_pages)} pages as text-only files: {', '.join(map(str, sorted_pages))}[/green]")
             else:
                 console.print(f"[green]✓ Extracted {len(sorted_pages)} pages as separate files: {', '.join(map(str, sorted_pages))}[/green]")
@@ -233,8 +376,14 @@ def extract_pages_separate(pdf_path: Path, page_range: str, remove_images: bool 
         return []
 
 
-def extract_pages_grouped(pdf_path: Path, page_range: str) -> list[tuple[Path, float]]:
-    """Extract pages respecting original groupings with resource optimization."""
+def extract_pages_grouped(pdf_path: Path, page_range: str, patterns: list[str] = None,
+                         template: str = None, source_page: int = 1,
+                         dry_run: bool = False) -> list[tuple[Path, float]]:
+    """
+    Extract pages respecting original groupings with smart filename generation.
+    
+    PHASE 2 ENHANCED: Now supports smart filename generation for groups.
+    """
     
     try:
         reader = PdfReader(pdf_path)
@@ -255,20 +404,38 @@ def extract_pages_grouped(pdf_path: Path, page_range: str) -> list[tuple[Path, f
         all_pages = [page for group in groups for page in group.pages]
         padding = len(str(max(all_pages))) if all_pages else 1
 
-        for group in groups:
+        # PHASE 2: Extract pattern content once (if using smart naming)
+        extraction_results = {}
+        if patterns and template:
+            try:
+                generator = FilenameGenerator()
+                _, extraction_results = generator.generate_smart_filename(
+                    pdf_path, range_desc, patterns, template, source_page, dry_run=True
+                )
+                
+                if not extraction_results.get('fallback_used', False):
+                    console.print(f"[green]Smart naming: extracted content from page {source_page}[/green]")
+                    for var, value in extraction_results.get('variables_extracted', {}).items():
+                        if value:
+                            console.print(f"[dim]  {var}: {value}[/dim]")
+            except Exception as e:
+                console.print(f"[yellow]Pattern extraction failed ({e}), using simple naming[/yellow]")
+                extraction_results = {'fallback_used': True}
+
+        for group_idx, group in enumerate(groups):
             if group.is_range and len(group.pages) > 1:
                 # Multi-page file for ranges
                 sorted_pages = sorted(group.pages)
                 start_page = sorted_pages[0]
                 end_page = sorted_pages[-1]
                 
+                # Create group range description
                 if len(sorted_pages) == (end_page - start_page + 1):
                     # Consecutive range
-                    base_output_path = pdf_path.parent / f"{pdf_path.stem}_pages{start_page}-{end_page}.pdf"
+                    group_range_desc = f"{start_page:02d}-{end_page:02d}"
                 else:
                     # Non-consecutive (like step results)
-                    page_list = ",".join(map(str, sorted_pages))
-                    base_output_path = pdf_path.parent / f"{pdf_path.stem}_pages{page_list}.pdf"
+                    group_range_desc = ",".join(f"{p:02d}" for p in sorted_pages)
                 
                 page_indices = [p - 1 for p in sorted_pages]  # Convert to 0-indexed
                 writer = _create_optimized_writer_from_pages(reader, page_indices)
@@ -276,13 +443,48 @@ def extract_pages_grouped(pdf_path: Path, page_range: str) -> list[tuple[Path, f
             else:
                 # Single page file
                 page_num = group.pages[0]
-                page_str = str(page_num).zfill(padding)
-                base_output_path = pdf_path.parent / f"{pdf_path.stem}_page{page_str}.pdf"
-                
+                group_range_desc = f"{page_num:02d}"
                 writer = _create_optimized_writer_from_pages(reader, [page_num - 1])
 
-            # Get unique filename
-            output_path = _get_unique_filename(base_output_path)
+            # Generate filename for this group
+            if patterns and template and not extraction_results.get('fallback_used', False):
+                # Use smart naming with group range
+                try:
+                    generator = FilenameGenerator()
+                    
+                    # Modify template to include group range
+                    if '{range}' in template:
+                        group_template = template.replace('{range}', group_range_desc)
+                    else:
+                        # Add group range to template
+                        group_template = template.replace('.pdf', f'_pages{group_range_desc}.pdf')
+                    
+                    output_path, _ = generator.generate_smart_filename(
+                        pdf_path, group_range_desc, patterns, group_template, source_page, dry_run
+                    )
+                except Exception:
+                    # Fallback to simple naming
+                    if group.is_range and len(group.pages) > 1:
+                        base_output_path = pdf_path.parent / f"{pdf_path.stem}_pages{group_range_desc}.pdf"
+                    else:
+                        page_str = str(group.pages[0]).zfill(padding)
+                        base_output_path = pdf_path.parent / f"{pdf_path.stem}_page{page_str}.pdf"
+                    output_path = _get_unique_filename(base_output_path)
+            else:
+                # Simple naming
+                if group.is_range and len(group.pages) > 1:
+                    base_output_path = pdf_path.parent / f"{pdf_path.stem}_pages{group_range_desc}.pdf"
+                else:
+                    page_str = str(group.pages[0]).zfill(padding)
+                    base_output_path = pdf_path.parent / f"{pdf_path.stem}_page{page_str}.pdf"
+                output_path = _get_unique_filename(base_output_path)
+
+            # Handle dry-run
+            if dry_run:
+                estimated_size = (pdf_path.stat().st_size * len(group.pages) / total_pages) / (1024 * 1024)
+                console.print(f"[blue]DRY RUN: Would create group {group_idx + 1} as {output_path.name}[/blue]")
+                output_files.append((output_path, estimated_size))
+                continue
 
             # Copy metadata
             if reader.metadata:
@@ -295,10 +497,11 @@ def extract_pages_grouped(pdf_path: Path, page_range: str) -> list[tuple[Path, f
             file_size = output_path.stat().st_size / (1024 * 1024)
             output_files.append((output_path, file_size))
 
-            if output_path != base_output_path:
-                console.print(f"[yellow]Note: Saved as {output_path.name} to avoid overwriting[/yellow]")
-
-        console.print(f"[green]✓ Created {len(output_files)} grouped files[/green]")
+        if dry_run:
+            console.print(f"[blue]DRY RUN: Would create {len(output_files)} grouped files[/blue]")
+        else:
+            console.print(f"[green]✓ Created {len(output_files)} grouped files[/green]")
+        
         return output_files
 
     except ValueError as e:
@@ -309,8 +512,12 @@ def extract_pages_grouped(pdf_path: Path, page_range: str) -> list[tuple[Path, f
         return []
 
 
-def split_to_pages(pdf_path: Path) -> list[tuple[Path, float]]:
-    """Split PDF into individual pages with resource optimization."""
+def split_to_pages(pdf_path: Path, dry_run: bool = False) -> list[tuple[Path, float]]:
+    """
+    Split PDF into individual pages with resource optimization.
+    
+    PHASE 2: Added dry-run support.
+    """
     
     output_files = []
 
@@ -325,6 +532,13 @@ def split_to_pages(pdf_path: Path) -> list[tuple[Path, float]]:
             page_num = str(i + 1).zfill(padding)
             base_output_path = pdf_path.parent / f"{pdf_path.stem}_page{page_num}.pdf"
             output_path = _get_unique_filename(base_output_path)
+
+            # Handle dry-run
+            if dry_run:
+                estimated_size = (pdf_path.stat().st_size / total_pages) / (1024 * 1024)
+                console.print(f"[blue]DRY RUN: Would create page {i + 1} as {output_path.name}[/blue]")
+                output_files.append((output_path, estimated_size))
+                continue
 
             # Create optimized writer for single page
             writer = _create_optimized_writer_from_pages(reader, [i])
@@ -341,8 +555,8 @@ def split_to_pages(pdf_path: Path) -> list[tuple[Path, float]]:
             file_size = output_path.stat().st_size / (1024 * 1024)
             output_files.append((output_path, file_size))
 
-            if output_path != base_output_path:
-                console.print(f"[yellow]Note: Page {i+1} saved as {output_path.name} to avoid overwriting[/yellow]")
+        if dry_run:
+            console.print(f"[blue]DRY RUN: Would split into {len(output_files)} files[/blue]")
 
         return output_files
 
@@ -422,3 +636,6 @@ def analyze_pdf(pdf_path: Path) -> None:
 
     except Exception as e:
         console.print(f"[red]Error analyzing {pdf_path.name}: {e}[/red]")
+
+
+# End of file #

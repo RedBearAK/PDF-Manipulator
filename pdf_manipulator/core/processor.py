@@ -1,4 +1,13 @@
-"""High-level processing coordination."""
+"""
+Enhanced high-level processing coordination with pattern and template support.
+File: pdf_manipulator/core/processor.py
+
+PHASE 2 ENHANCEMENTS:
+- Passes pattern and template arguments to operations
+- Supports dry-run mode with real pattern extraction
+- Maintains backward compatibility for existing functionality
+- Graceful handling of pattern extraction failures
+"""
 
 import argparse
 
@@ -52,9 +61,74 @@ def process_single_file_mode(args: argparse.Namespace, pdf_files: list[tuple[Pat
             pass
 
 
+def _extract_pattern_and_template_args(args: argparse.Namespace) -> tuple[list[str], str, int]:
+    """
+    Extract pattern and template arguments from args object.
+    
+    PHASE 2: New helper function for consistent argument extraction.
+    
+    Returns:
+        Tuple of (patterns, template, source_page)
+    """
+    patterns = getattr(args, 'scrape_pattern', None)
+    template = getattr(args, 'filename_template', None)
+    source_page = getattr(args, 'pattern_source_page', 1)
+    
+    # Handle patterns from file
+    if getattr(args, 'scrape_patterns_file', None):
+        try:
+            with open(args.scrape_patterns_file, 'r') as f:
+                file_patterns = []
+                for line_num, line in enumerate(f, 1):
+                    line = line.strip()
+                    if line and not line.startswith('#'):  # Skip empty lines and comments
+                        file_patterns.append(line)
+                patterns = file_patterns
+        except Exception as e:
+            console.print(f"[red]Error reading patterns file: {e}[/red]")
+            patterns = None
+    
+    return patterns, template, source_page
+
+
+def _show_pattern_preview(pdf_path: Path, patterns: list[str], template: str, source_page: int):
+    """
+    Show pattern extraction preview for user feedback.
+    
+    PHASE 2: New function to preview pattern extraction results.
+    """
+    if not patterns or not template:
+        return
+    
+    try:
+        from pdf_manipulator.renamer.filename_generator import FilenameGenerator
+        
+        generator = FilenameGenerator()
+        preview = generator.preview_filename_generation(
+            pdf_path, "preview", patterns, template, source_page
+        )
+        
+        console.print(f"\n[cyan]Pattern Preview:[/cyan]")
+        for var_name, details in preview.get('extraction_preview', {}).items():
+            console.print(f"  {var_name}: {details['simulated_value']} (from '{details['keyword']}')")
+        
+        console.print(f"[cyan]Template Result:[/cyan] {preview['filename_preview']}")
+        
+        if preview.get('would_conflict'):
+            console.print(f"[yellow]Note: Would save as {preview['final_filename']} to avoid conflict[/yellow]")
+        
+    except Exception as e:
+        console.print(f"[yellow]Pattern preview failed: {e}[/yellow]")
+
+
 def process_single_pdf(pdf_path: Path, page_count: int, file_size: float,
                         args: argparse.Namespace):
     """Process a single PDF file based on the specified operation."""
+    
+    # PHASE 2: Extract pattern and template arguments
+    patterns, template, source_page = _extract_pattern_and_template_args(args)
+    dry_run = getattr(args, 'dry_run', False)
+    
     if args.analyze:
         analyze_pdf(pdf_path)
 
@@ -63,7 +137,7 @@ def process_single_pdf(pdf_path: Path, page_count: int, file_size: float,
         handle_detailed_analysis(pdf_path, getattr(args, 'no_auto_fix', False))
 
     elif args.optimize:
-        # NEW: Check and fix malformation before optimizing
+        # Check and fix malformation before optimizing
         ready_pdf_path = ensure_pdf_ready_for_optimization(
             pdf_path, 
             batch_mode=getattr(args, 'batch', False),
@@ -90,17 +164,16 @@ def process_single_pdf(pdf_path: Path, page_count: int, file_size: float,
                     console.print("[green]✓ Original file replaced[/green]")
 
     elif args.extract_pages:
-        # The existing extraction logic can stay mostly the same
-        # The malformation checking happens in the malformation_checker.py
-        # which should be updated to use the legacy wrapper
+        # PHASE 2: Enhanced extraction with pattern support
+        
+        # Show pattern preview if using smart naming
+        if patterns and template and not args.batch:
+            _show_pattern_preview(pdf_path, patterns, template, source_page)
         
         # Validate that extraction makes sense for this PDF
         try:
-
             from pdf_manipulator.core.parser import parse_page_range_from_args
             pages_to_extract, desc, groups = parse_page_range_from_args(args, page_count, pdf_path)
-
-            # pages_to_extract, _, groups = parse_page_range(args.extract_pages, page_count, pdf_path)
 
             if len(pages_to_extract) == page_count:
                 console.print("[yellow]Extracting all pages - consider using --optimize instead[/yellow]")
@@ -115,11 +188,18 @@ def process_single_pdf(pdf_path: Path, page_count: int, file_size: float,
             else:
                 extraction_mode = 'single'
 
-            if args.batch or Confirm.ask(f"Extract pages {args.extract_pages} from {pdf_path.name}?", default=True):
+            # Ask for confirmation unless in batch or dry-run mode
+            proceed = True
+            if not args.batch and not dry_run:
+                proceed = Confirm.ask(f"Extract pages {args.extract_pages} from {pdf_path.name}?", default=True)
+            
+            if proceed:
                 if extraction_mode == 'separate':
                     # Extract as separate files
-                    output_files = extract_pages_separate(pdf_path, args.extract_pages)
-                    if output_files:
+                    output_files = extract_pages_separate(
+                        pdf_path, args.extract_pages, patterns, template, source_page, dry_run
+                    )
+                    if output_files and not dry_run:
                         total_size = sum(size for _, size in output_files)
                         console.print(f"[green]✓ Created {len(output_files)} files:[/green]")
                         for out_path, out_size in output_files:
@@ -129,10 +209,13 @@ def process_single_pdf(pdf_path: Path, page_count: int, file_size: float,
                         if args.replace and Confirm.ask("Replace original file?", default=False):
                             pdf_path.unlink()
                             console.print("[green]✓ Original file deleted[/green]")
+                            
                 elif extraction_mode == 'grouped':
                     # Extract with groupings respected
-                    output_files = extract_pages_grouped(pdf_path, args.extract_pages)
-                    if output_files:
+                    output_files = extract_pages_grouped(
+                        pdf_path, args.extract_pages, patterns, template, source_page, dry_run
+                    )
+                    if output_files and not dry_run:
                         total_size = sum(size for _, size in output_files)
                         console.print(f"[green]✓ Created {len(output_files)} grouped files:[/green]")
                         for out_path, out_size in output_files:
@@ -144,8 +227,10 @@ def process_single_pdf(pdf_path: Path, page_count: int, file_size: float,
                             console.print("[green]✓ Original file deleted[/green]")
                 else:
                     # Extract as single document
-                    output_path, new_size = extract_pages(pdf_path, args.extract_pages)
-                    if output_path:
+                    output_path, new_size = extract_pages(
+                        pdf_path, args.extract_pages, patterns, template, source_page, dry_run
+                    )
+                    if output_path and not dry_run:
                         console.print(f"[green]✓ Created:[/green] {output_path.name} ({new_size:.2f} MB)")
                         if file_size > 0:
                             console.print(f"[dim]Size: {((new_size / file_size) * 100):.1f}% of original[/dim]")
@@ -161,9 +246,14 @@ def process_single_pdf(pdf_path: Path, page_count: int, file_size: float,
         if page_count == 1:
             console.print("[yellow]PDF already has only one page[/yellow]")
         else:
-            if args.batch or Confirm.ask(f"Split into {page_count} separate files?", default=False):
-                output_files = split_to_pages(pdf_path)
-                if output_files:
+            # Ask for confirmation unless in batch or dry-run mode
+            proceed = True
+            if not args.batch and not dry_run:
+                proceed = Confirm.ask(f"Split into {page_count} separate files?", default=False)
+            
+            if proceed:
+                output_files = split_to_pages(pdf_path, dry_run)
+                if output_files and not dry_run:
                     console.print(f"[green]✓ Split into {len(output_files)} files:[/green]")
                     for out_path, out_size in output_files:
                         console.print(f"  - {out_path.name} ({out_size:.2f} MB)")
@@ -201,3 +291,4 @@ def process_multipage_pdfs(pdf_files: list[tuple[Path, int, float]],
                 console.print("[green]✓ Original file deleted[/green]")
 
 
+# End of file #

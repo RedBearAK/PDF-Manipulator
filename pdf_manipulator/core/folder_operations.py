@@ -1,3 +1,14 @@
+"""
+Enhanced folder operations with batch pattern extraction and smart naming support.
+File: pdf_manipulator/core/folder_operations.py
+
+PHASE 2 ENHANCEMENTS:
+- Batch processing with pattern extraction and smart naming
+- Dry-run support for folder operations
+- Consistent pattern argument handling across all modes
+- Enhanced error handling and user feedback
+"""
+
 import argparse
 
 from pathlib import Path
@@ -20,6 +31,73 @@ from pdf_manipulator.core.warning_suppression import suppress_all_pdf_warnings
 
 
 console = Console()
+
+
+def _extract_pattern_and_template_args(args: argparse.Namespace) -> tuple[list[str], str, int]:
+    """
+    Extract pattern and template arguments from args object.
+    
+    PHASE 2: Centralized pattern argument extraction.
+    """
+    patterns = getattr(args, 'scrape_pattern', None)
+    template = getattr(args, 'filename_template', None)
+    source_page = getattr(args, 'pattern_source_page', 1)
+    
+    # Handle patterns from file
+    if getattr(args, 'scrape_patterns_file', None):
+        try:
+            with open(args.scrape_patterns_file, 'r') as f:
+                file_patterns = []
+                for line_num, line in enumerate(f, 1):
+                    line = line.strip()
+                    if line and not line.startswith('#'):  # Skip empty lines and comments
+                        file_patterns.append(line)
+                patterns = file_patterns
+        except Exception as e:
+            console.print(f"[red]Error reading patterns file: {e}[/red]")
+            patterns = None
+    
+    return patterns, template, source_page
+
+
+def _show_batch_pattern_preview(pdf_files: list[tuple[Path, int, float]], 
+                               patterns: list[str], template: str, source_page: int):
+    """
+    Show pattern extraction preview for batch operations.
+    
+    PHASE 2: Preview pattern extraction for first few files in batch.
+    """
+    if not patterns or not template:
+        return
+    
+    console.print(f"\n[cyan]Batch Pattern Preview (first 3 files):[/cyan]")
+    
+    try:
+        from pdf_manipulator.renamer.filename_generator import FilenameGenerator
+        
+        generator = FilenameGenerator()
+        
+        for i, (pdf_path, page_count, file_size) in enumerate(pdf_files[:3]):
+            console.print(f"\n[dim]{pdf_path.name}:[/dim]")
+            
+            try:
+                preview = generator.preview_filename_generation(
+                    pdf_path, "preview", patterns, template, source_page
+                )
+                
+                for var_name, details in preview.get('extraction_preview', {}).items():
+                    console.print(f"  {var_name}: {details['simulated_value']}")
+                
+                console.print(f"  → {preview['filename_preview']}")
+                
+            except Exception as e:
+                console.print(f"  [yellow]Preview failed: {e}[/yellow]")
+        
+        if len(pdf_files) > 3:
+            console.print(f"[dim]... and {len(pdf_files) - 3} more files[/dim]")
+            
+    except Exception as e:
+        console.print(f"[yellow]Batch pattern preview failed: {e}[/yellow]")
 
 
 def handle_folder_operations(args: argparse.Namespace, pdf_files: list[tuple[Path, int, float]]):
@@ -63,6 +141,10 @@ def process_optimize_mode(args: argparse.Namespace, pdf_files: list[tuple[Path, 
 def process_extract_split_mode(args: argparse.Namespace, pdf_files: list[tuple[Path, int, float]]):
     """Handle extract/split mode for folder operations."""
 
+    # PHASE 2: Extract pattern and template arguments
+    patterns, template, source_page = _extract_pattern_and_template_args(args)
+    dry_run = getattr(args, 'dry_run', False)
+
     # Determine operation
     if args.extract_pages:
         operation = "extract"
@@ -75,12 +157,20 @@ def process_extract_split_mode(args: argparse.Namespace, pdf_files: list[tuple[P
             console.print("[dim]Mode: Extract as separate files[/dim]")
         else:
             console.print("[dim]Mode: Extract as single document[/dim]")
+            
+        # PHASE 2: Show pattern preview for batch operations
+        if patterns and template and not args.batch:
+            _show_batch_pattern_preview(pdf_files, patterns, template, source_page)
     else:
         operation = "split"
         console.print("\n[blue]Split pages mode[/blue]")
 
+    # Show dry-run indicator
+    if dry_run:
+        console.print("[yellow]DRY RUN MODE - No files will be created[/yellow]")
+
     # Extra warning for batch mode with replace
-    if args.batch and args.replace:
+    if args.batch and args.replace and not dry_run:
         if operation == "extract":
             console.print(f"[red]WARNING: This will extract pages {args.extract_pages} "
                             "from ALL PDFs and replace originals![/red]")
@@ -94,53 +184,59 @@ def process_extract_split_mode(args: argparse.Namespace, pdf_files: list[tuple[P
     # Process based on mode
     if args.batch:
         if operation == "extract":
-            process_batch_extract(args, pdf_files)
+            process_batch_extract(args, pdf_files, patterns, template, source_page, dry_run)
         else:
-            process_batch_split(args, pdf_files)
+            process_batch_split(args, pdf_files, dry_run)
     else:
         if operation == "extract":
-            process_interactive_extract(args, pdf_files)
+            process_interactive_extract(args, pdf_files, patterns, template, source_page, dry_run)
         else:
             # Split mode - only multi-page PDFs
             process_multipage_pdfs(pdf_files, "split", args.replace)
 
 
-def process_batch_extract(args: argparse.Namespace, pdf_files: list[tuple[Path, int, float]]):
-    """Handle batch extraction processing."""
+def process_batch_extract(args: argparse.Namespace, pdf_files: list[tuple[Path, int, float]],
+                         patterns: list[str], template: str, source_page: int, dry_run: bool):
+    """Handle batch extraction processing with pattern support."""
 
-    with suppress_all_pdf_warnings():
+    suppress_context = suppress_all_pdf_warnings() if not dry_run else None
+    
+    with suppress_context if suppress_context else _null_context():
         # For extract, process all PDFs (not just multi-page)
         for pdf_path, page_count, file_size in pdf_files:
             console.print(f"\n[cyan]Processing {pdf_path.name}[/cyan]...")
             try:
-                # Check if extraction is valid for this PDF
-
-
+                # Validate extraction for this PDF
                 from pdf_manipulator.core.parser import parse_page_range_from_args
                 pages_to_extract, desc, groups = parse_page_range_from_args(args, page_count, pdf_path)
-
-                # pages_to_extract, _, groups = parse_page_range(args.extract_pages, page_count, pdf_path)
                 
                 if args.respect_groups:
                     # Extract with groupings respected
-                    output_files = extract_pages_grouped(pdf_path, args.extract_pages)
-                    if output_files:
+                    output_files = extract_pages_grouped(
+                        pdf_path, args.extract_pages, patterns, template, source_page, dry_run
+                    )
+                    if output_files and not dry_run:
                         console.print(f"[green]✓ Created {len(output_files)} grouped files[/green]")
                         if args.replace:
                             pdf_path.unlink()
                             console.print("[yellow]✓ Deleted original[/yellow]")
+                            
                 elif args.separate_files:
                     # Extract as separate files
-                    output_files = extract_pages_separate(pdf_path, args.extract_pages)
-                    if output_files:
+                    output_files = extract_pages_separate(
+                        pdf_path, args.extract_pages, patterns, template, source_page, dry_run
+                    )
+                    if output_files and not dry_run:
                         console.print(f"[green]✓ Created {len(output_files)} separate files[/green]")
                         if args.replace:
                             pdf_path.unlink()
                             console.print("[yellow]✓ Deleted original[/yellow]")
                 else:
                     # Extract as single document
-                    output_path, new_size = extract_pages(pdf_path, args.extract_pages)
-                    if output_path:
+                    output_path, new_size = extract_pages(
+                        pdf_path, args.extract_pages, patterns, template, source_page, dry_run
+                    )
+                    if output_path and not dry_run:
                         console.print(f"[green]✓ Created:[/green] {output_path.name}")
                         if args.replace:
                             pdf_path.unlink()
@@ -150,30 +246,34 @@ def process_batch_extract(args: argparse.Namespace, pdf_files: list[tuple[Path, 
             except ValueError as e:
                 console.print(f"[yellow]Skipping {pdf_path.name}: {e}[/yellow]")
 
-def process_batch_split(args: argparse.Namespace, pdf_files: list[tuple[Path, int, float]]):
+
+def process_batch_split(args: argparse.Namespace, pdf_files: list[tuple[Path, int, float]], dry_run: bool):
     """Handle batch split processing."""
 
-    with suppress_all_pdf_warnings():
+    suppress_context = suppress_all_pdf_warnings() if not dry_run else None
+    
+    with suppress_context if suppress_context else _null_context():
         # Split mode - only multi-page PDFs
         multi_page_pdfs = [(p, c, s) for p, c, s in pdf_files if c > 1]
         for pdf_path, page_count, file_size in multi_page_pdfs:
             console.print(f"\n[cyan]Processing {pdf_path.name}[/cyan]...")
-            output_files = split_to_pages(pdf_path)
-            if output_files:
+            output_files = split_to_pages(pdf_path, dry_run)
+            if output_files and not dry_run:
                 console.print(f"[green]✓ Split into {len(output_files)} files[/green]")
                 if args.replace:
                     pdf_path.unlink()
                     console.print("[yellow]✓ Deleted original[/yellow]")
 
 
-def process_interactive_extract(args: argparse.Namespace, pdf_files: list[tuple[Path, int, float]]):
-    """Handle interactive extraction processing."""
+def process_interactive_extract(args: argparse.Namespace, pdf_files: list[tuple[Path, int, float]],
+                               patterns: list[str], template: str, source_page: int, dry_run: bool):
+    """Handle interactive extraction processing with pattern support."""
 
     # For extract, ask about each PDF
     for pdf_path, page_count, file_size in pdf_files:
         console.print(f"\n[cyan]{pdf_path.name}[/cyan] - {page_count} pages, {file_size:.2f} MB")
 
-        # NEW: Check for malformation on individual file
+        # Check for malformation on individual file
         pdf_files_single = [(pdf_path, page_count, file_size)]
         fixed_files = check_and_fix_malformation_with_args(pdf_files_single, args)
         
@@ -186,11 +286,26 @@ def process_interactive_extract(args: argparse.Namespace, pdf_files: list[tuple[
         
         try:
             # Validate extraction for this PDF
-
             from pdf_manipulator.core.parser import parse_page_range_from_args
             pages_to_extract, desc, groups = parse_page_range_from_args(args, page_count, pdf_path)
-
-            # pages_to_extract, _, groups = parse_page_range(args.extract_pages, page_count, pdf_path)
+            
+            # PHASE 2: Show pattern preview for this file
+            if patterns and template:
+                try:
+                    from pdf_manipulator.renamer.filename_generator import FilenameGenerator
+                    
+                    generator = FilenameGenerator()
+                    preview = generator.preview_filename_generation(
+                        pdf_path, desc, patterns, template, source_page
+                    )
+                    
+                    console.print(f"[cyan]Pattern Preview:[/cyan]")
+                    for var_name, details in preview.get('extraction_preview', {}).items():
+                        console.print(f"  {var_name}: {details['simulated_value']}")
+                    console.print(f"[cyan]Filename:[/cyan] {preview['filename_preview']}")
+                    
+                except Exception as e:
+                    console.print(f"[yellow]Pattern preview failed: {e}[/yellow]")
             
             # Determine extraction mode
             if args.respect_groups:
@@ -200,11 +315,18 @@ def process_interactive_extract(args: argparse.Namespace, pdf_files: list[tuple[
             else:
                 extraction_mode = decide_extraction_mode(pages_to_extract, groups, True)
             
-            if Confirm.ask(f"Extract pages {args.extract_pages}?", default=True):
+            # Ask for confirmation unless dry-run
+            proceed = True
+            if not dry_run:
+                proceed = Confirm.ask(f"Extract pages {args.extract_pages}?", default=True)
+            
+            if proceed:
                 if extraction_mode == 'separate':
                     # Extract as separate files
-                    output_files = extract_pages_separate(pdf_path, args.extract_pages)
-                    if output_files:
+                    output_files = extract_pages_separate(
+                        pdf_path, args.extract_pages, patterns, template, source_page, dry_run
+                    )
+                    if output_files and not dry_run:
                         total_size = sum(size for _, size in output_files)
                         console.print(f"[green]✓ Created {len(output_files)} files:[/green]")
                         for out_path, out_size in output_files:
@@ -212,10 +334,13 @@ def process_interactive_extract(args: argparse.Namespace, pdf_files: list[tuple[
                         if args.replace and Confirm.ask("Delete original file?", default=False):
                             pdf_path.unlink()
                             console.print("[green]✓ Original file deleted[/green]")
+                            
                 elif extraction_mode == 'grouped':
                     # Extract with groupings respected
-                    output_files = extract_pages_grouped(pdf_path, args.extract_pages)
-                    if output_files:
+                    output_files = extract_pages_grouped(
+                        pdf_path, args.extract_pages, patterns, template, source_page, dry_run
+                    )
+                    if output_files and not dry_run:
                         total_size = sum(size for _, size in output_files)
                         console.print(f"[green]✓ Created {len(output_files)} grouped files:[/green]")
                         for out_path, out_size in output_files:
@@ -225,8 +350,10 @@ def process_interactive_extract(args: argparse.Namespace, pdf_files: list[tuple[
                             console.print("[green]✓ Original file deleted[/green]")
                 else:
                     # Extract as single document
-                    output_path, new_size = extract_pages(pdf_path, args.extract_pages)
-                    if output_path:
+                    output_path, new_size = extract_pages(
+                        pdf_path, args.extract_pages, patterns, template, source_page, dry_run
+                    )
+                    if output_path and not dry_run:
                         console.print(f"[green]✓ Created:[/green] {output_path.name} ({new_size:.2f} MB)")
                         if file_size > 0:
                             console.print(f"[dim]Size: {((new_size / file_size) * 100):.1f}% of original[/dim]")
@@ -237,3 +364,12 @@ def process_interactive_extract(args: argparse.Namespace, pdf_files: list[tuple[
 
         except ValueError as e:
             console.print(f"[yellow]Cannot extract from this PDF: {e}[/yellow]")
+
+
+def _null_context():
+    """Return a null context manager for conditional context usage."""
+    from contextlib import nullcontext
+    return nullcontext()
+
+
+# End of file #
