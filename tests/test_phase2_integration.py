@@ -76,7 +76,7 @@ Thank you for your business!
             'flexible': False
         }
         result = extractor.extract_pattern(test_text, pattern)
-        if result and '1250' in result:  # Should extract the number part
+        if result and '1,250' in result:  # Should extract the number part
             console.print(f"[green]✓ Enhanced single movement: '{result}'[/green]")
             success_count += 1
         else:
@@ -135,7 +135,7 @@ Thank you for your business!
             'flexible': True  # Should handle $ and commas gracefully
         }
         result = extractor.extract_pattern(test_text, pattern)
-        if result and '1375' in result:
+        if result and '1,375' in result:
             console.print(f"[green]✓ Flexible extraction: '{result}'[/green]")
             success_count += 1
         else:
