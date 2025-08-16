@@ -1,4 +1,4 @@
-"""Command-line interface and argument parsing with Ghostscript integration."""
+"""Command-line interface enhanced with scraper integration and compact pattern syntax."""
 
 import sys
 import signal
@@ -16,6 +16,8 @@ from pdf_manipulator.core.malformation_utils import (
     check_and_fix_malformation_batch,
     check_and_fix_malformation_early
 )
+from pdf_manipulator.renamer import PatternProcessor
+from pdf_manipulator.renamer.template_engine import validate_template_against_variables
 
 
 console = Console()
@@ -30,16 +32,7 @@ def setup_signal_handlers():
     signal.signal(signal.SIGINT, signal_handler)
 
 
-# Add this wrapper for all interactive prompts
-def safe_prompt(prompt_func, *args, **kwargs):
-    """Wrapper for Rich prompts that handles KeyboardInterrupt gracefully."""
-    try:
-        return prompt_func(*args, **kwargs)
-    except KeyboardInterrupt:
-        console.print("\n[yellow]Operation cancelled by user[/yellow]")
-        sys.exit(130)
-
-
+# Enhanced epilog with compact pattern syntax documentation
 epilog_for_argparse = """
 Operations:
     --strip-first       Strip multi-page PDFs to first page only (alias for --extract-pages=1)
@@ -83,11 +76,35 @@ Boolean Expressions:
     NOT logic:          "all & !type:empty"  (all pages except empty ones)
     Complex:            "type:text & size:<500KB"  (small text pages)
 
-Range Patterns:
-    Pattern to pattern: "contains:'Chapter 1' to contains:'Chapter 2'"
-    Number to pattern:  "5 to contains:'Appendix'"
-    Pattern to number:  "contains:'Start' to 10"
-    With offsets:       "contains:'Summary'+1 to contains:'Index'-1"
+Smart Filename Generation:
+    Pattern Extraction:
+        Compact Syntax: [var=]keyword:movements+extraction_type+count[-]
+        
+        Movements (1-99, max 2):
+            u/d = up/down lines       r/l = right/left words
+            Examples: u1 (up 1), r2 (right 2), u1r2 (up 1, right 2)
+        
+        Extraction Types:
+            wd0-99 = words (0=until end of line)
+            ln0-99 = lines (0=until end of document)  
+            nb0-99 = numbers (0=until non-numeric)
+            
+        Flexibility: Add '-' suffix for format-tolerant extraction
+        
+        Examples:
+            "Invoice Number:r1wd1"              # Right 1, get 1 word
+            "company=Company Name:u1ln1"        # Up 1, get 1 line (named variable)
+            "Total:d1r1nb1-"                    # Down 1, right 1, get 1 number (flexible)
+            "Description:d2wd0"                 # Down 2, get words until end
+    
+    Template Syntax:
+        Variables:      {variable_name}
+        Fallbacks:      {variable_name|fallback_value}
+        Built-ins:      {range}, {original_name}, {page_count}
+        
+        Examples:
+            "{company}_{invoice}_pages{range}.pdf"
+            "{vendor|Unknown}_{amount|NO-AMT}_{date}.pdf"
 
 Extraction Options:
     --separate-files    Extract pages as separate documents (one file per page)
@@ -117,15 +134,19 @@ Examples:
     %(prog)s --strip-first             # Interactive: ask which PDFs to strip
     %(prog)s --split-pages             # Interactive: ask which PDFs to split
     
-    Analysis:
-    %(prog)s file.pdf --analyze             # Basic PDF analysis
-    %(prog)s file.pdf --analyze-detailed    # Detailed page-by-page breakdown
+    Smart filename extraction:
+    %(prog)s invoice.pdf --extract-pages="1" \\
+        --scrape-pattern="invoice=Invoice Number:r1wd1" \\
+        --scrape-pattern="company=Company Name:u1ln1" \\
+        --filename-template="{company}_{invoice}.pdf"
     
-    Page range extraction:
-    %(prog)s file.pdf --extract-pages=3-7       # Extract pages 3-7
-    %(prog)s file.pdf --extract-pages="1-3,7"   # Extract pages 1-3 and 7
-    %(prog)s file.pdf --extract-pages="last 2"  # Extract last 2 pages
-    %(prog)s file.pdf --extract-pages=::2       # Extract odd pages
+    Complex pattern extraction:
+    %(prog)s statements/*.pdf --extract-pages="1-2" \\
+        --scrape-pattern="account=Account Number:r2wd1-" \\
+        --scrape-pattern="date=Statement Date:u1r1wd3-" \\
+        --scrape-pattern="balance=Balance:d25r10nb1-" \\
+        --filename-template="{account}_{date}_{balance}_pages{range}.pdf" \\
+        --dry-run
     
     Content-based extraction:
     %(prog)s file.pdf --extract-pages="type:text"              # Extract text pages
@@ -137,64 +158,68 @@ Examples:
     %(prog)s file.pdf --extract-pages="type:text & size:<500KB"    # Small text pages
     %(prog)s file.pdf --extract-pages="type:image | type:mixed"    # Visual content
     %(prog)s file.pdf --extract-pages="all & !type:empty"          # All non-empty pages
-    %(prog)s file.pdf --extract-pages="contains:'Figure' | size:>2MB"  # Figures or large pages
     
-    Range patterns:
-    %(prog)s file.pdf --extract-pages="contains:'Chapter 1' to contains:'Chapter 2'"
-    %(prog)s file.pdf --extract-pages="5 to type:empty"  # From page 5 to first empty page
+    Standalone scraper mode:
+    %(prog)s invoices/*.pdf --scrape-text \\
+        --scrape-pattern="Invoice Number:r1wd1" \\
+        --scrape-pattern="Amount:d1nb1" \\
+        --output extracted_data.tsv
     
-    Extraction modes:
-    %(prog)s file.pdf --extract-pages="1-3,7" --separate-files   # Extract as separate files
-    %(prog)s file.pdf --extract-pages="1-3,7" --respect-groups   # Respect groupings
-    
-    Ghostscript operations:
-    %(prog)s file.pdf --gs-fix                           # Fix malformed PDF
-    %(prog)s --gs-batch-fix --dry-run                    # See what would be fixed
-    %(prog)s --gs-batch-fix --recursive --gs-quality=ebook  # Fix all PDFs recursively
-    
-    Batch operations:
-    %(prog)s --extract-pages="type:text" --batch                # Auto-fixes malformed PDFs
-    %(prog)s --extract-pages="type:text" --batch --no-auto-fix  # Skips malformation fixes
-    %(prog)s --optimize --batch                                 # Auto-fixes before optimizing
-    %(prog)s --optimize --batch --no-auto-fix                   # Optimizes without fixing
-    %(prog)s --extract-pages="type:text" --batch         # Extract text pages from all PDFs
-    %(prog)s --strip-first --batch --replace             # Strip all PDFs to one page (CAREFUL!)
-
-    Group filtering:
-    %(prog)s file.pdf --extract-pages="contains:'Chapter' to contains:'Summary'" --filter-matches="1,3"
-        # Find all chapter sections, but only extract chapters 1 and 3
-    
-    %(prog)s file.pdf --extract-pages="type:text" --filter-matches="contains:'Important'"
-        # Extract text pages, but only keep groups containing "Important"
-    
-    %(prog)s file.pdf --extract-pages="all" --group-start="contains:'Section'" --filter-matches="size:>1MB"
-        # Split all pages at section boundaries, keep only large sections
-    
-    Boundary detection:
-    %(prog)s file.pdf --extract-pages="1-50" --group-start="contains:'Chapter'"
-        # Extract pages 1-50, split into groups at chapter boundaries
-    
-    %(prog)s file.pdf --extract-pages="type:text" --group-start="contains:'Article'" --group-end="contains:'References'"
-        # Extract text pages, create article sections from "Article" to "References"
-    
-    Complex filtering:
-    %(prog)s file.pdf --extract-pages="type:text | type:mixed" --filter-matches="contains:'Critical' & !25-40"
-        # Get text/mixed pages, filter to groups with "Critical" but not overlapping pages 25-40
+    Debugging mode:
+    %(prog)s file.pdf --dump-text --output raw_text.txt
 
 Safety options:
     --no-auto-fix     Disable automatic malformation fixing in batch mode
     --replace         Replace/delete originals after processing (still asks!)
     --replace-originals  Replace originals with Ghostscript fixed versions (CAREFUL!)
-    --strip-first --batch --replace    # Most dangerous: strips all and replaces
 
 Note: No short arguments are provided to ensure clarity and prevent accidents.
       Use quotes around complex expressions with spaces or special characters.
 """
 
 
+def validate_scraper_arguments(args: argparse.Namespace) -> tuple[bool, str]:
+    """Validate scraper-related arguments for consistency and syntax."""
+    
+    # Check mutually exclusive pattern sources
+    if args.scrape_pattern and args.scrape_patterns_file:
+        return False, "Cannot use both --scrape-pattern and --scrape-patterns-file"
+    
+    # Pattern arguments require --extract-pages (except in standalone scraper mode)
+    pattern_args_used = args.scrape_pattern or args.scrape_patterns_file or args.filename_template
+    if pattern_args_used and not args.extract_pages and not args.scrape_text:
+        return False, "Pattern and template arguments require --extract-pages (or --scrape-text for standalone mode)"
+    
+    # Template requires patterns
+    if args.filename_template and not (args.scrape_pattern or args.scrape_patterns_file):
+        return False, "--filename-template requires pattern arguments"
+    
+    # Validate pattern syntax early
+    if args.scrape_pattern:
+        try:
+            processor = PatternProcessor()
+            processor.validate_pattern_list(args.scrape_pattern)
+        except Exception as e:
+            return False, f"Invalid pattern syntax: {e}"
+    
+    # Validate template syntax
+    if args.filename_template:
+        from pdf_manipulator.renamer.template_engine import TemplateEngine
+        engine = TemplateEngine()
+        is_valid, error = engine.validate_template(args.filename_template)
+        if not is_valid:
+            return False, f"Invalid template syntax: {error}"
+    
+    # Validate source page
+    if args.pattern_source_page < 1:
+        return False, "Pattern source page must be >= 1"
+    
+    return True, ""
+
+
 def main():
     """
-    Main entry point for the PDF Manipulator.
+    Main entry point for the PDF Manipulator with scraper integration.
 
     Design note: This tool intentionally uses only long arguments (--flag) 
     without short versions (-f) to ensure clarity and prevent accidental 
@@ -204,7 +229,7 @@ def main():
 
     parser = argparse.ArgumentParser(
         prog="pdf-manipulator",
-        description="PDF Manipulator - Assess and manipulate PDF pages",
+        description="PDF Manipulator - Assess and manipulate PDF pages with intelligent naming",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=epilog_for_argparse
     )
@@ -232,6 +257,13 @@ def main():
     operations.add_argument('--analyze-detailed', action='store_true',
         help='Detailed page-by-page analysis to help craft boolean expressions')
 
+    # Scraper operations (standalone modes)
+    scraper_ops = parser.add_argument_group('scraper operations')
+    scraper_ops.add_argument('--scrape-text', action='store_true',
+        help='Extract text content using scraper patterns (standalone scraper mode)')
+    scraper_ops.add_argument('--dump-text', action='store_true',
+        help='Extract and display raw text from PDFs (debugging mode)')
+
     # Ghostscript operations
     ghostscript = parser.add_argument_group('ghostscript operations')
     ghostscript.add_argument('--gs-fix', action='store_true',
@@ -241,18 +273,30 @@ def main():
     ghostscript.add_argument('--gs-quality', choices=['screen', 'ebook', 'printer', 'prepress', 'default'],
         default='default', help='Ghostscript quality setting (default: default)')
 
+    # Pattern extraction (NEW)
+    patterns = parser.add_argument_group('pattern extraction')
+    patterns.add_argument('--scrape-pattern', action='append', metavar='PATTERN',
+        help=('Content extraction pattern with compact syntax: "[var=]keyword:movements+type+count[-]" '
+              '(can be used multiple times). Examples: "Invoice Number:r1wd1", "company=Company:u1ln1"'))
+    patterns.add_argument('--scrape-patterns-file', metavar='FILE',
+        help='File containing extraction patterns, one per line')
+    patterns.add_argument('--pattern-source-page', type=int, default=1, metavar='N',
+        help='Page number to extract patterns from (default: 1)')
+
+    # Template-based naming (NEW)
+    naming = parser.add_argument_group('intelligent naming')
+    naming.add_argument('--filename-template', metavar='TEMPLATE',
+        help=('Template for naming files: "{variable|fallback}_pages{range}.pdf". '
+              'Built-in variables: {range}, {original_name}, {page_count}'))
+
     # Extraction options
     extraction = parser.add_argument_group('extraction options')
     extraction.add_argument('--separate-files', action='store_true',
         help='Extract pages as separate documents (one file per page). Default: single document')
     extraction.add_argument('--respect-groups', action='store_true',
         help='Respect comma-separated groupings: ranges→multi-page files, individuals→single files')
-    # extraction.add_argument('--preserve-image-quality', action='store_true', default=True,
-    #     help='Preserve original image quality during extraction (default: enabled)')
-    # extraction.add_argument('--aggressive-optimization', action='store_true',
-    #     help='Use aggressive optimization that may affect image quality but reduces file size')
 
-    # Group filtering and boundary options (add after extraction group)
+    # Group filtering and boundary options
     filtering = parser.add_argument_group('group filtering and boundaries')
     filtering.add_argument('--filter-matches', type=str, metavar='CRITERIA',
         help=('Filter extracted page groups by index (e.g., "1,3,4") or content criteria '
@@ -262,6 +306,11 @@ def main():
         help='Start new groups at pages matching pattern (e.g., "contains:\'Chapter\'", "type:text")')
     filtering.add_argument('--group-end', type=str, metavar='PATTERN', 
         help='End current groups at pages matching pattern (e.g., "contains:\'Summary\'", "size:>1MB")')
+
+    # Output options (for scraper modes)
+    output = parser.add_argument_group('output options')
+    output.add_argument('--output', '-o', metavar='FILE',
+        help='Output file for scraper modes (TSV for --scrape-text, text for --dump-text)')
 
     # Processing modes
     modes = parser.add_argument_group('processing modes')
@@ -319,8 +368,8 @@ def main():
         console.print("[red]Error: --replace-originals can only be used with Ghostscript operations[/red]")
         sys.exit(1)
 
-    if args.dry_run and not args.gs_batch_fix:
-        console.print("[red]Error: --dry-run can only be used with --gs-batch-fix[/red]")
+    if args.dry_run and not (args.gs_batch_fix or args.extract_pages or args.scrape_text):
+        console.print("[red]Error: --dry-run requires an operation that supports it[/red]")
         sys.exit(1)
 
     # Validate group filtering arguments
@@ -340,6 +389,12 @@ def main():
             console.print(f"[red]Error: Invalid filter syntax: {error_msg}[/red]")
             sys.exit(1)
 
+    # NEW: Validate scraper arguments
+    is_valid, error_msg = validate_scraper_arguments(args)
+    if not is_valid:
+        console.print(f"[red]Error: {error_msg}[/red]")
+        sys.exit(1)
+
     # Count operations
     regular_operations = sum([
         bool(args.extract_pages),
@@ -349,6 +404,7 @@ def main():
         args.analyze_detailed
         ])
     ghostscript_operations = sum([args.gs_fix, args.gs_batch_fix])
+    scraper_operations = sum([args.scrape_text, args.dump_text])
     
     if regular_operations > 1:
         console.print("[red]Error: Please specify only one regular operation at a time[/red]")
@@ -358,8 +414,12 @@ def main():
         console.print("[red]Error: Please specify only one Ghostscript operation at a time[/red]")
         sys.exit(1)
 
-    if regular_operations > 0 and ghostscript_operations > 0:
-        console.print("[red]Error: Cannot mix regular operations with Ghostscript operations[/red]")
+    if scraper_operations > 1:
+        console.print("[red]Error: Please specify only one scraper operation at a time[/red]")
+        sys.exit(1)
+
+    if sum([regular_operations > 0, ghostscript_operations > 0, scraper_operations > 0]) > 1:
+        console.print("[red]Error: Cannot mix different operation types[/red]")
         sys.exit(1)
 
     # Determine if path is file or folder
@@ -370,9 +430,12 @@ def main():
         console.print(f"[red]Error: {args.path} is not a valid file or directory[/red]")
         sys.exit(1)
 
-    # Handle Ghostscript operations first
+    # Handle different operation types
     if args.gs_fix or args.gs_batch_fix:
         handle_ghostscript_operations(args, is_file, is_folder)
+        return
+    elif args.scrape_text or args.dump_text:
+        handle_scraper_operations(args, is_file, is_folder)
         return
 
     # Process regular operations based on input type
@@ -383,7 +446,7 @@ def main():
             console.print("[red]Failed to read PDF file[/red]")
             sys.exit(1)
         
-        # NEW: Check for malformation immediately after scanning
+        # Check for malformation immediately after scanning
         pdf_files = check_and_fix_malformation_early(pdf_files, args)
         
         display_pdf_table(pdf_files, title="PDF File Assessment")
@@ -395,7 +458,6 @@ def main():
             console.print("[yellow]No PDF files found![/yellow]")
             sys.exit(0)
         
-        # pdf_files = check_and_fix_malformation_batch(pdf_files, args)
         pdf_files = check_and_fix_malformation_batch(pdf_files, "scanning")
         
         display_pdf_table(pdf_files)
@@ -488,5 +550,15 @@ def handle_ghostscript_operations(args: argparse.Namespace, is_file: bool, is_fo
             sys.exit(1)
 
 
+def handle_scraper_operations(args: argparse.Namespace, is_file: bool, is_folder: bool):
+    """Handle standalone scraper operations."""
+    console.print("[blue]Scraper operations not yet implemented in Phase 1[/blue]")
+    console.print("[dim]This will integrate the existing scraper CLI functionality[/dim]")
+    # TODO: Implement in Phase 2
+    sys.exit(0)
+
+
 if __name__ == "__main__":
     main()
+
+# End of file #
