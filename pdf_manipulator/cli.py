@@ -168,6 +168,49 @@ Examples:
     Debugging mode:
     %(prog)s file.pdf --dump-text --output raw_text.txt
 
+Enhanced Pattern Syntax (Phase 3):
+    Base syntax:        [var=]keyword:movements+type+count[-][pg<pages>][mt<matches>]
+    
+    Movements:          u/d + 1-99: up/down lines
+                        l/r + 1-99: left/right words
+    
+    Extraction Types:   wd + 0-99: words (0 = until end of line)
+                        ln + 0-99: lines (0 = until end of document)  
+                        nb + 0-99: numbers only (extracts numeric data from mixed content)
+    
+    Page Specs (NEW):   pg3: page 3 only
+                        pg2-4: pages 2 through 4
+                        pg3-: page 3 to end
+                        pg-2: last 2 pages
+                        pg0: all pages (debug mode)
+    
+    Match Specs (NEW):  mt2: second match of keyword
+                        mt1-3: matches 1 through 3
+                        mt2-: match 2 to end
+                        mt-2: last 2 matches
+                        mt0: all matches (debug mode)
+
+Phase 3 Pattern Examples:
+    Basic patterns:
+    %(prog)s invoice.pdf --extract-pages="1" \\
+        --scrape-pattern="Invoice Number:r1wd1" \\
+        --scrape-pattern="company=Company Name:u1ln1" \\
+        --filename-template="{company}_{invoice_number}.pdf"
+    
+    Enhanced multi-page patterns:
+    %(prog)s statements/*.pdf --extract-pages="1-3" \\
+        --scrape-pattern="account=Account Number:r2wd1pg2" \\
+        --scrape-pattern="date=Statement Date:u1r1wd3mt2" \\
+        --scrape-pattern="balance=Balance:d25r10nb1-pg-2" \\
+        --filename-template="{account}_{date}_{balance}_pages{range}.pdf" \\
+        --dry-run
+    
+    Number extraction examples:
+    %(prog)s invoices/*.pdf --extract-pages="all" \\
+        --scrape-pattern="amount=Total:r1nb1" \\          # Extracts "1250" from "Total: $1,250.00"
+        --scrape-pattern="tax=Tax:r1nb1-" \\              # Extracts all numbers until non-numeric
+        --filename-template="{amount}_{tax}_invoice.pdf"
+
 Safety options:
     --no-auto-fix     Disable automatic malformation fixing in batch mode
     --replace         Replace/delete originals after processing (still asks!)
@@ -275,19 +318,30 @@ def main():
 
     # Pattern extraction (NEW)
     patterns = parser.add_argument_group('pattern extraction')
+    # patterns.add_argument('--scrape-pattern', action='append', metavar='PATTERN',
+    #     help=('Content extraction pattern with compact syntax: "[var=]keyword:movements+type+count[-]" '
+    #           '(can be used multiple times). Examples: "Invoice Number:r1wd1", "company=Company:u1ln1"'))
     patterns.add_argument('--scrape-pattern', action='append', metavar='PATTERN',
-        help=('Content extraction pattern with compact syntax: "[var=]keyword:movements+type+count[-]" '
-              '(can be used multiple times). Examples: "Invoice Number:r1wd1", "company=Company:u1ln1"'))
+        help=('Content extraction pattern with enhanced Phase 3 syntax: '
+            '"[var=]keyword:movements+type+count[-][pg<pages>][mt<matches>]" '
+            '(can be used multiple times). Examples: "Invoice Number:r1wd1", '
+            '"company=Company:u1ln1pg2", "total=Total:r1nb1mt2"'))
     patterns.add_argument('--scrape-patterns-file', metavar='FILE',
         help='File containing extraction patterns, one per line')
+    # patterns.add_argument('--pattern-source-page', type=int, default=1, metavar='N',
+    #     help='Page number to extract patterns from (default: 1)')
     patterns.add_argument('--pattern-source-page', type=int, default=1, metavar='N',
-        help='Page number to extract patterns from (default: 1)')
+        help='Page number to extract patterns from (default: 1, overridden by pg specs)')
 
     # Template-based naming (NEW)
     naming = parser.add_argument_group('intelligent naming')
+    # naming.add_argument('--filename-template', metavar='TEMPLATE',
+    #     help=('Template for naming files: "{variable|fallback}_pages{range}.pdf". '
+    #           'Built-in variables: {range}, {original_name}, {page_count}'))
     naming.add_argument('--filename-template', metavar='TEMPLATE',
         help=('Template for naming files: "{variable|fallback}_pages{range}.pdf". '
-              'Built-in variables: {range}, {original_name}, {page_count}'))
+            'Built-in variables: {range}, {original_name}, {page_count}. '
+            'Works with Phase 3 enhanced pattern extraction.'))
 
     # Extraction options
     extraction = parser.add_argument_group('extraction options')
