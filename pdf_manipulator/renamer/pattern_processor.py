@@ -1,12 +1,13 @@
 """
-Updated compact pattern syntax processor for enhanced content extraction.
+Enhanced compact pattern syntax processor with Phase 3 multi-page and multi-match support.
 File: pdf_manipulator/renamer/pattern_processor.py
 
-PHASE 2 UPDATES:
-- Now uses enhanced PatternExtractor with chained movements
-- Full support for zero-count extraction (wd0, ln0, nb0)
-- Flexible extraction mode with '-' suffix
-- No more legacy bridge - direct enhanced format usage
+PHASE 3 UPDATES:
+- Enhanced syntax with pg<pages> and mt<matches> specifications
+- Multi-page search capability with flexible range syntax
+- Multi-match selection with range-based filtering
+- Comprehensive range parsing: N, N-M, N-, -N, 0 (all)
+- Backward compatible with Phase 2 syntax
 """
 
 import re
@@ -29,36 +30,49 @@ class CompactPatternError(Exception):
 
 class PatternProcessor:
     """
-    Process compact pattern syntax and extract content from PDFs.
+    Process enhanced compact pattern syntax with multi-page and multi-match support.
     
-    PHASE 2 ENHANCEMENTS:
-    - Direct use of enhanced PatternExtractor (no legacy bridge needed)
-    - Full chained movement support: [('u', 1), ('r', 2)]
-    - Zero-count extraction: wd0, ln0, nb0 with "until end" semantics
-    - Flexible extraction mode for format tolerance
+    PHASE 3 ENHANCEMENTS:
+    - Page specifications: pg3, pg2-4, pg3-, pg-2, pg0 (all pages)
+    - Match specifications: mt2, mt1-3, mt2-, mt-2, mt0 (all matches)
+    - Combined specifications: pattern+pg2-4mt3
+    - Range validation and semantic error checking
     
-    Compact Syntax: [var=]keyword:movements+extraction_type+count[-]
+    Enhanced Syntax: [var=]keyword:movements+extraction_type+count[-][pg<pages>][mt<matches>]
     
-    Movements:
+    Core Movements (unchanged):
     - u/d + 1-99: up/down lines
     - l/r + 1-99: left/right words
     - Maximum 2 movements, no conflicting directions
-    - Zero movements supported (extract at keyword location)
     
-    Extraction Types:
+    Extraction Types (unchanged):
     - wd + 0-99: words (0 = until end of line)
     - ln + 0-99: lines (0 = until end of document)
     - nb + 0-99: numbers (0 = until non-numeric)
     
-    Flexibility:
-    - Optional '-' suffix for format-tolerant extraction
+    NEW: Page/Match Range Syntax:
+    - N: Specific number (pg3, mt2)
+    - N-M: Range N through M (pg2-4, mt1-3)
+    - N-: N through end (pg3-, mt2-)
+    - -N: Last N items (pg-3, mt-2)
+    - 0: All items (pg0, mt0)
+    
+    Examples:
+    - "Invoice:r1wd1" - Basic (unchanged)
+    - "Invoice:r1wd1mt2" - Second match
+    - "Invoice:r1wd1pg2-4" - Search pages 2-4
+    - "Invoice:r1wd1pg2-4mt-2" - Pages 2-4, last 2 matches
     """
     
-    # Regex for compact syntax validation (movements are optional)
-    COMPACT_PATTERN = re.compile(r'^([udlr]\d{1,2})?([udlr]\d{1,2})?(wd|ln|nb)(\d{1,2})(-?)$')
+    # Enhanced regex for Phase 3 syntax with optional pg/mt specifications
+    COMPACT_PATTERN = re.compile(
+        r'^([udlr]\d{1,2})?([udlr]\d{1,2})?(wd|ln|nb)(\d{1,2})(-?)'
+        r'(pg(?:\d{1,3}-\d{1,3}|\d{1,3}-|-\d{1,3}|\d{1,3}|0))?'
+        r'(mt(?:\d{1,3}-\d{1,3}|\d{1,3}-|-\d{1,3}|\d{1,3}|0))?$'
+    )
     
     def __init__(self):
-        self.extractor = PatternExtractor()  # Now uses enhanced version
+        self.extractor = PatternExtractor()
         self.processor = PyPDFProcessor(suppress_warnings=True)
         
     def parse_pattern_string(self, pattern_str: str) -> tuple[str, str, dict]:
@@ -66,7 +80,7 @@ class PatternProcessor:
         Parse full pattern string into variable name, keyword, and extraction spec.
         
         Args:
-            pattern_str: Full pattern like "invoice=Invoice Number:r1wd1" or "Company:u1ln1"
+            pattern_str: Full pattern like "invoice=Invoice Number:r1wd1pg2-4mt2"
             
         Returns:
             Tuple of (variable_name, keyword, extraction_spec)
@@ -96,8 +110,8 @@ class PatternProcessor:
         if not keyword:
             raise CompactPatternError("Keyword cannot be empty")
         
-        # Parse compact extraction specification
-        extraction_spec = self.parse_compact_spec(compact_spec)
+        # Parse enhanced compact extraction specification
+        extraction_spec = self._parse_extraction_spec(compact_spec)
         
         # Generate variable name if not provided
         if variable_name is None:
@@ -105,35 +119,49 @@ class PatternProcessor:
         
         return variable_name, keyword, extraction_spec
     
-    def parse_compact_spec(self, spec: str) -> dict:
+    def _parse_extraction_spec(self, spec: str) -> dict:
         """
-        Parse compact movement and extraction specification.
+        Parse enhanced extraction specification with pg/mt support.
         
         Args:
-            spec: Compact spec like "r1wd1", "u1r2wd3", "d5ln0-"
+            spec: Enhanced spec like "r1wd1pg2-4mt3-"
             
         Returns:
-            Dictionary with parsed movement and extraction details
+            Dictionary with parsed movement, extraction, page, and match details
             
         Raises:
-            CompactPatternError: For invalid syntax or constraints
+            CompactPatternError: For invalid syntax
         """
         spec = spec.strip()
         
-        # Check for flexibility suffix
-        flexible = spec.endswith('-')
-        if flexible:
-            spec = spec[:-1]
-        
-        # Match the pattern
+        # Match the enhanced pattern
         match = self.COMPACT_PATTERN.match(spec)
         if not match:
             raise CompactPatternError(
-                f"Invalid compact syntax: '{spec}'. "
-                f"Expected format: [movement][movement]extraction_type+count"
+                f"Invalid enhanced syntax: '{spec}'. "
+                f"Expected format: [movement][movement]extraction_type+count[-][pg<pages>][mt<matches>]"
             )
         
-        # Parse movements
+        # Parse base components (movements, extraction)
+        result = self._parse_base_components(match)
+        
+        # Parse page specification (group 6)
+        if match.group(6):
+            pg_spec = match.group(6)[2:]  # Remove 'pg' prefix
+            result['page_spec'] = self._parse_range_spec(pg_spec, 'page')
+        
+        # Parse match specification (group 7)
+        if match.group(7):
+            mt_spec = match.group(7)[2:]  # Remove 'mt' prefix
+            result['match_spec'] = self._parse_range_spec(mt_spec, 'match')
+        
+        # Validate the complete specification
+        self._validate_extraction_spec(result)
+        
+        return result
+    
+    def _parse_base_components(self, match: re.Match) -> dict:
+        """Parse movement and extraction components from regex match."""
         movements = []
         
         # First movement (optional)
@@ -151,9 +179,10 @@ class PatternProcessor:
         # Parse extraction type and count
         extract_type = match.group(3)
         extract_count = int(match.group(4))
+        flexible = bool(match.group(5))  # '-' suffix
         
-        # Validate constraints
-        self._validate_constraints(movements, extract_type, extract_count)
+        # Validate basic constraints
+        self._validate_base_constraints(movements, extract_type, extract_count)
         
         return {
             'movements': movements,
@@ -162,15 +191,61 @@ class PatternProcessor:
             'flexible': flexible
         }
     
+    def _parse_range_spec(self, range_str: str, spec_type: str) -> dict:
+        """
+        Parse range specifications: '2-4', '3-', '-2', '0'
+        
+        Args:
+            range_str: Range specification string
+            spec_type: Type for error messages ('page' or 'match')
+            
+        Returns:
+            Dictionary describing the range
+        """
+        if range_str == '0':
+            return {'type': 'all'}
+        elif '-' not in range_str:
+            # Single number: pg3, mt2
+            value = int(range_str)
+            if value < 1:
+                raise CompactPatternError(f"Invalid {spec_type} number: {value} (must be >= 1)")
+            return {'type': 'single', 'value': value}
+        elif range_str.startswith('-'):
+            # Last N: pg-3, mt-2
+            count = int(range_str[1:])
+            if count < 1:
+                raise CompactPatternError(f"Invalid last {spec_type} count: {count} (must be >= 1)")
+            return {'type': 'last', 'count': count}
+        elif range_str.endswith('-'):
+            # From N to end: pg3-, mt2-
+            start = int(range_str[:-1])
+            if start < 1:
+                raise CompactPatternError(f"Invalid {spec_type} start: {start} (must be >= 1)")
+            return {'type': 'from', 'start': start}
+        else:
+            # Range N-M: pg2-4, mt1-3
+            try:
+                start_str, end_str = range_str.split('-')
+                start = int(start_str)
+                end = int(end_str)
+                
+                if start < 1 or end < 1:
+                    raise CompactPatternError(f"Invalid {spec_type} range: {start}-{end} (both must be >= 1)")
+                if start > end:
+                    raise CompactPatternError(f"Backwards {spec_type} range: {start}-{end} (start > end)")
+                
+                return {'type': 'range', 'start': start, 'end': end}
+            except ValueError:
+                raise CompactPatternError(f"Invalid {spec_type} range format: {range_str}")
+    
     def _parse_movement(self, move_str: str) -> tuple[str, int]:
         """Parse single movement like 'u1' or 'r15'."""
         direction = move_str[0]
         distance = int(move_str[1:])
         return direction, distance
     
-    def _validate_constraints(self, movements: list, extract_type: str, extract_count: int):
-        """Validate pattern constraints and logical consistency."""
-        
+    def _validate_base_constraints(self, movements: list, extract_type: str, extract_count: int):
+        """Validate basic pattern constraints (unchanged from Phase 2)."""
         # Check movement distances (1-99)
         for direction, distance in movements:
             if distance < 1 or distance > 99:
@@ -199,166 +274,142 @@ class PatternProcessor:
         if extract_type not in ['wd', 'ln', 'nb']:
             raise CompactPatternError(f"Invalid extraction type: {extract_type}")
     
+    def _validate_extraction_spec(self, spec: dict) -> None:
+        """Validate complete extraction specification for semantic correctness."""
+        # Page specification validation
+        if 'page_spec' in spec:
+            page_spec = spec['page_spec']
+            if page_spec['type'] == 'range':
+                # Already validated during parsing
+                pass
+            elif page_spec['type'] == 'single':
+                if page_spec['value'] > 999:  # Reasonable upper limit
+                    raise CompactPatternError(f"Page number too large: {page_spec['value']}")
+            elif page_spec['type'] == 'last':
+                if page_spec['count'] > 100:  # Reasonable upper limit
+                    raise CompactPatternError(f"Last page count too large: {page_spec['count']}")
+        
+        # Match specification validation
+        if 'match_spec' in spec:
+            match_spec = spec['match_spec']
+            if match_spec['type'] == 'range':
+                # Already validated during parsing
+                pass
+            elif match_spec['type'] == 'single':
+                if match_spec['value'] > 999:  # Reasonable upper limit
+                    raise CompactPatternError(f"Match number too large: {match_spec['value']}")
+            elif match_spec['type'] == 'last':
+                if match_spec['count'] > 100:  # Reasonable upper limit
+                    raise CompactPatternError(f"Last match count too large: {match_spec['count']}")
+    
     def convert_to_enhanced_pattern(self, keyword: str, extraction_spec: dict) -> dict:
         """
-        Convert compact specification to enhanced PatternExtractor format.
-        
-        PHASE 2: Now creates enhanced format directly (no legacy bridge).
+        Convert enhanced specification to PatternExtractor format.
         
         Args:
-            keyword: The keyword to search for
-            extraction_spec: Parsed compact specification
+            keyword: Search keyword
+            extraction_spec: Parsed extraction specification
             
         Returns:
-            Enhanced pattern dictionary for PatternExtractor
+            Dictionary compatible with enhanced PatternExtractor
         """
-        movements = extraction_spec['movements']
-        extract_type = extraction_spec['extract_type']
-        extract_count = extraction_spec['extract_count']
-        flexible = extraction_spec['flexible']
-        
         return {
             'keyword': keyword,
-            'movements': movements,
-            'extract_type': extract_type,
-            'extract_count': extract_count,
-            'flexible': flexible
+            'movements': extraction_spec['movements'],
+            'extract_type': extraction_spec['extract_type'],
+            'extract_count': extraction_spec['extract_count'],
+            'flexible': extraction_spec['flexible'],
+            # Phase 3 additions
+            'page_spec': extraction_spec.get('page_spec'),
+            'match_spec': extraction_spec.get('match_spec')
         }
     
-    def extract_content_from_pdf(self, pdf_path: Path, patterns: list[tuple[str, str, dict]], 
-                                source_page: int = 1) -> dict[str, str]:
+    def extract_from_pdf(self, pdf_path: Path, variable_name: str, keyword: str,
+                         extraction_spec: dict, source_page: int = 1) -> dict:
         """
-        Extract content from PDF using multiple patterns.
-        
-        PHASE 2: Uses enhanced PatternExtractor directly.
+        Extract content using enhanced pattern with multi-page/multi-match support.
         
         Args:
             pdf_path: Path to PDF file
-            patterns: List of (variable_name, keyword, extraction_spec) tuples
-            source_page: Page number to extract from (1-indexed)
+            variable_name: Variable name for this extraction
+            keyword: Search keyword
+            extraction_spec: Parsed extraction specification
+            source_page: Fallback page if no page specification
             
         Returns:
-            Dictionary mapping variable names to extracted content
+            Dictionary with extraction results and metadata
         """
-        results = {}
-        
         try:
-            # Extract text from specified page
-            page_text = self.processor.extract_page(pdf_path, source_page)
+            # Convert to enhanced pattern format
+            enhanced_pattern = self.convert_to_enhanced_pattern(keyword, extraction_spec)
             
-            for variable_name, keyword, extraction_spec in patterns:
-                try:
-                    # Convert to enhanced format
-                    enhanced_pattern = self.convert_to_enhanced_pattern(keyword, extraction_spec)
-                    
-                    # Extract content using enhanced PatternExtractor
-                    raw_content = self.extractor.extract_pattern(page_text, enhanced_pattern)
-                    
-                    if raw_content is not None:
-                        # Sanitize for filename use
-                        clean_content = sanitize_content_for_filename(
-                            raw_content, 
-                            self._infer_content_type(extraction_spec['extract_type'])
-                        )
-                        results[variable_name] = clean_content
-                    else:
-                        results[variable_name] = None
-                        
-                except Exception as e:
-                    console.print(f"[yellow]Warning: Failed to extract '{variable_name}': {e}[/yellow]")
-                    results[variable_name] = None
+            # Determine page specification for extractor
+            if 'page_spec' in extraction_spec:
+                page_spec = extraction_spec['page_spec']
+            else:
+                # Default to source_page for backward compatibility
+                page_spec = {'type': 'single', 'value': source_page}
             
+            # Use enhanced extractor with multi-page/multi-match support
+            extractor_result = self.extractor.extract_pattern_enhanced(
+                pdf_path, enhanced_pattern, page_spec
+            )
+            
+            if extractor_result['success']:
+                # Handle single vs multiple results
+                selected_match = extractor_result['selected_match']
+                if isinstance(selected_match, list):
+                    # Multiple matches - use first for filename, warn about others
+                    clean_result = sanitize_content_for_filename(
+                        selected_match[0],
+                        self._infer_content_type(extraction_spec['extract_type'])
+                    )
+                    warnings = extractor_result['warnings'] + [
+                        f"Using first of {len(selected_match)} matches for filename"
+                    ]
+                else:
+                    # Single match or No_Match
+                    clean_result = sanitize_content_for_filename(
+                        selected_match,
+                        self._infer_content_type(extraction_spec['extract_type'])
+                    ) if selected_match != "No_Match" else "No_Match"
+                    warnings = extractor_result['warnings']
+                
+                return {
+                    'variable_name': variable_name,
+                    'keyword': keyword,
+                    'success': True,
+                    'selected_match': clean_result,
+                    'raw_result': selected_match,
+                    'pages_searched': extractor_result['pages_searched'],
+                    'total_matches_found': len(extractor_result['matches']),
+                    'warnings': warnings,
+                    'debug_info': extractor_result['debug_info']
+                }
+            else:
+                return {
+                    'variable_name': variable_name,
+                    'keyword': keyword,
+                    'success': False,
+                    'selected_match': extractor_result['selected_match'],
+                    'pages_searched': extractor_result['pages_searched'],
+                    'warnings': extractor_result['warnings'],
+                    'debug_info': extractor_result['debug_info']
+                }
+                
         except Exception as e:
-            console.print(f"[red]Error extracting from {pdf_path}: {e}[/red]")
-            # Return empty results for all variables
-            for variable_name, _, _ in patterns:
-                results[variable_name] = None
-        
-        return results
-    
-    def debug_pattern_extraction(self, pdf_path: Path, pattern_string: str, source_page: int = 1) -> dict:
-        """
-        Debug a single pattern extraction with detailed output.
-        
-        PHASE 2: New debugging method using enhanced extraction.
-        
-        Args:
-            pdf_path: Path to PDF file
-            pattern_string: Single pattern string to debug
-            source_page: Page to extract from
-            
-        Returns:
-            Detailed debugging information
-        """
-        debug_info = {
-            'pattern_string': pattern_string,
-            'parsing_success': False,
-            'extraction_success': False,
-            'parsing_error': None,
-            'extraction_error': None,
-            'variable_name': None,
-            'keyword': None,
-            'extraction_spec': None,
-            'enhanced_pattern': None,
-            'page_text_preview': None,
-            'extractor_debug': None,
-            'final_result': None
-        }
-        
-        try:
-            # Parse pattern
-            variable_name, keyword, extraction_spec = self.parse_pattern_string(pattern_string)
-            debug_info.update({
-                'parsing_success': True,
+            return {
                 'variable_name': variable_name,
                 'keyword': keyword,
-                'extraction_spec': extraction_spec
-            })
-            
-            # Convert to enhanced pattern
-            enhanced_pattern = self.convert_to_enhanced_pattern(keyword, extraction_spec)
-            debug_info['enhanced_pattern'] = enhanced_pattern
-            
-            # Extract page text
-            page_text = self.processor.extract_page(pdf_path, source_page)
-            debug_info['page_text_preview'] = page_text[:500] + "..." if len(page_text) > 500 else page_text
-            
-            # Debug extraction process
-            extractor_debug = self.extractor.debug_extraction(page_text, enhanced_pattern)
-            debug_info['extractor_debug'] = extractor_debug
-            
-            if extractor_debug['success']:
-                raw_result = extractor_debug['extracted']
-                clean_result = sanitize_content_for_filename(
-                    raw_result,
-                    self._infer_content_type(extraction_spec['extract_type'])
-                ) if raw_result else None
-                
-                debug_info.update({
-                    'extraction_success': True,
-                    'raw_result': raw_result,
-                    'final_result': clean_result
-                })
-            else:
-                debug_info['extraction_error'] = extractor_debug['error']
-            
-        except Exception as e:
-            debug_info['parsing_error'] = str(e)
-        
-        return debug_info
-    
-    def _infer_content_type(self, extract_type: str) -> str:
-        """Infer content type for sanitization."""
-        type_mapping = {
-            'wd': 'text',
-            'ln': 'text', 
-            'nb': 'number'
-        }
-        return type_mapping.get(extract_type, 'text')
+                'success': False,
+                'selected_match': f"Error: {str(e)}",
+                'warnings': [f"Extraction failed: {str(e)}"],
+                'debug_info': {'exception': str(e)}
+            }
     
     def validate_pattern_list(self, pattern_strings: list[str]) -> list[tuple[str, str, dict]]:
         """
-        Validate and parse a list of pattern strings.
+        Validate and parse a list of enhanced pattern strings.
         
         Args:
             pattern_strings: List of pattern strings to validate
@@ -390,39 +441,134 @@ class PatternProcessor:
         
         return parsed_patterns
     
-    def get_pattern_examples(self) -> dict[str, dict]:
+    def debug_enhanced_pattern(self, pdf_path: Path, pattern_string: str, 
+                              source_page: int = 1) -> dict:
         """
-        Get examples of valid patterns for documentation and testing.
+        Debug enhanced pattern extraction with detailed analysis.
+        
+        Args:
+            pdf_path: Path to PDF file
+            pattern_string: Enhanced pattern string to debug
+            source_page: Fallback page for patterns without pg specification
+            
+        Returns:
+            Comprehensive debugging information
+        """
+        debug_info = {
+            'pattern_string': pattern_string,
+            'parsing_success': False,
+            'extraction_success': False,
+            'parsing_error': None,
+            'extraction_error': None,
+            'variable_name': None,
+            'keyword': None,
+            'extraction_spec': None,
+            'enhanced_pattern': None,
+            'pages_to_search': None,
+            'extractor_result': None,
+            'final_result': None
+        }
+        
+        try:
+            # Parse enhanced pattern
+            variable_name, keyword, extraction_spec = self.parse_pattern_string(pattern_string)
+            debug_info.update({
+                'parsing_success': True,
+                'variable_name': variable_name,
+                'keyword': keyword,
+                'extraction_spec': extraction_spec
+            })
+            
+            # Show what pages would be searched
+            if 'page_spec' in extraction_spec:
+                debug_info['pages_to_search'] = f"Pages as specified: {extraction_spec['page_spec']}"
+            else:
+                debug_info['pages_to_search'] = f"Default to page {source_page}"
+            
+            # Perform extraction
+            result = self.extract_from_pdf(pdf_path, variable_name, keyword, extraction_spec, source_page)
+            debug_info['extractor_result'] = result
+            
+            if result['success']:
+                debug_info.update({
+                    'extraction_success': True,
+                    'final_result': result['selected_match']
+                })
+            else:
+                debug_info['extraction_error'] = result.get('warnings', ['Unknown error'])
+                
+        except Exception as e:
+            debug_info['parsing_error'] = str(e)
+        
+        return debug_info
+    
+    def _infer_content_type(self, extract_type: str) -> str:
+        """Infer content type for sanitization."""
+        type_mapping = {
+            'wd': 'text',
+            'ln': 'text', 
+            'nb': 'number'
+        }
+        return type_mapping.get(extract_type, 'text')
+    
+    def get_enhanced_pattern_examples(self) -> dict[str, dict]:
+        """
+        Get examples of valid enhanced patterns for documentation.
         
         Returns:
-            Dictionary of pattern examples with descriptions
+            Dictionary of example patterns with descriptions
         """
         return {
-            'basic_patterns': {
-                'Invoice Number:r1wd1': 'Get 1 word to the right of "Invoice Number"',
-                'Total:d1nb1': 'Get 1 number 1 line down from "Total"',
-                'Company:u1ln1': 'Get 1 line above "Company"',
-                'Description:wd0': 'Get all words from "Description" to end of line'
+            # Basic patterns (unchanged)
+            'basic_word': {
+                'pattern': 'Invoice Number:r1wd1',
+                'description': 'Extract 1 word to the right of "Invoice Number"'
             },
-            'chained_movements': {
-                'Invoice:u1r2wd1': 'Go up 1 line, then right 2 words, get 1 word',
-                'Total:d2r1nb1': 'Go down 2 lines, then right 1 word, get 1 number',
-                'Header:u1l1ln1': 'Go up 1 line, then left 1 word, get 1 line'
+            'basic_line': {
+                'pattern': 'company=Company:u1ln1',
+                'description': 'Extract 1 line above "Company", store as "company"'
             },
-            'zero_count_extraction': {
-                'Amount:nb0': 'Get all consecutive numbers from "Amount"',
-                'Description:d1wd0': 'Go down 1 line, get all words to end',
-                'Details:u1ln0': 'Go up 1 line, get all lines to end of document'
+            
+            # Multi-match patterns
+            'second_match': {
+                'pattern': 'Invoice Number:r1wd1mt2',
+                'description': 'Extract from second occurrence of "Invoice Number"'
             },
-            'flexible_extraction': {
-                'Amount:r1nb1-': 'Get 1 number to the right (format tolerant)',
-                'Company:u1ln1-': 'Get 1 line above (skip line breaks)',
-                'Total:d1r2wd0-': 'Chained movement with flexible word extraction'
+            'last_two_matches': {
+                'pattern': 'Amount:r1nb1mt-2',
+                'description': 'Extract from last 2 occurrences of "Amount"'
             },
-            'variable_naming': {
-                'invoice=Invoice Number:r1wd1': 'Named variable "invoice"',
-                'company=Company Name:u1ln1': 'Named variable "company"',
-                'total=Grand Total:d1nb1-': 'Named variable with flexible extraction'
+            'all_matches': {
+                'pattern': 'Item:r1wd2mt0',
+                'description': 'Extract from all occurrences of "Item" (debug mode)'
+            },
+            
+            # Multi-page patterns
+            'specific_page': {
+                'pattern': 'Total:r1nb1pg2',
+                'description': 'Search for "Total" only on page 2'
+            },
+            'page_range': {
+                'pattern': 'Contact:u1ln1pg2-4',
+                'description': 'Search pages 2-4 for "Contact"'
+            },
+            'from_page': {
+                'pattern': 'Summary:d1wd5pg3-',
+                'description': 'Search from page 3 to end for "Summary"'
+            },
+            'last_pages': {
+                'pattern': 'Signature:u1wd2pg-2',
+                'description': 'Search last 2 pages for "Signature"'
+            },
+            
+            # Combined specifications
+            'complex_pattern': {
+                'pattern': 'ref=Reference:r1wd1pg2-4mt3',
+                'description': 'Third match of "Reference" from pages 2-4, store as "ref"'
+            },
+            'flexible_pattern': {
+                'pattern': 'address=Address:d1wd0-pg1mt2',
+                'description': 'Second "Address" match from page 1, extract all words flexibly'
             }
         }
 
