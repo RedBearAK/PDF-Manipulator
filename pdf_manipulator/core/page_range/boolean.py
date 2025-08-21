@@ -527,10 +527,10 @@ class UnifiedBooleanSupervisor:
         # Handle single patterns
         try:
             if looks_like_pattern(expression):
-                return parse_pattern_expression(expression, self.pdf_path)
+                return parse_pattern_expression(expression, self.pdf_path, self.total_pages)
             else:
                 # Try as single expression (page numbers, keywords, etc.)
-                return parse_single_expression(expression, self.total_pages)
+                return parse_single_expression(expression, self.pdf_path, self.total_pages)
         except Exception as e:
             raise ValueError(f"Failed to evaluate expression '{expression}': {e}")
     
