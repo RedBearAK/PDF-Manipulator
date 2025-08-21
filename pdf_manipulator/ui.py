@@ -41,27 +41,6 @@ def show_folder_help(pdf_files: list[tuple[Path, int, float]]):
         console.print("Add --replace to overwrite originals (use with extreme caution!)")
 
 
-# def display_pdf_table(pdf_files: list[tuple[Path, int, float]], title: str = "PDF Files Assessment"):
-#     """Display PDF files in a formatted table."""
-#     table = Table(title=title)
-#     table.add_column("File", style="cyan", no_wrap=True)
-#     table.add_column("Pages", justify="right", style="magenta")
-#     table.add_column("Size (MB)", justify="right", style="green")
-#     table.add_column("Status", style="yellow")
-
-#     for pdf_path, page_count, file_size in pdf_files:
-#         status = "⚠️  Multi-page" if page_count > 1 else "✓ Single page"
-#         table.add_row(
-#             pdf_path.name,
-#             str(page_count),
-#             f"{file_size:.2f}",
-#             status
-#         )
-
-#     console.print(table)
-
-
-# def display_pdf_table_simple(pdf_files: list[tuple[Path, int, float]], title: str = "PDF Files Assessment"):
 def display_pdf_table(pdf_files: list[tuple[Path, int, float]], title: str = "PDF Files Assessment"):
     """Display PDF files in a formatted table with malformation indicators."""
     from pdf_manipulator.core.malformation_utils import check_pdf_malformation
@@ -99,7 +78,9 @@ def display_pdf_table(pdf_files: list[tuple[Path, int, float]], title: str = "PD
 
 def decide_extraction_mode(pages_to_extract: set[int], groups: list[PageGroup], interactive: bool = True) -> str:
     """
-    Decide extraction mode. Returns 'single', 'separate', or 'grouped'.
+    Decide how to extract pages based on grouping.
+    
+    FIXED: Handle empty groups without crashing.
     """
     if not interactive:
         return 'single'  # Default to single document in batch mode
@@ -112,13 +93,37 @@ def decide_extraction_mode(pages_to_extract: set[int], groups: list[PageGroup], 
     
     # Show what groups we detected
     console.print(f"\n[yellow]Extracting {num_pages} pages in {num_groups} groups:[/yellow]")
+    # for group in groups:
+    #     if group.is_range:
+    #         page_range = f"{min(group.pages)}-{max(group.pages)}" if len(group.pages) > 1 else str(group.pages[0])
+    #         console.print(f"  Range: {group.original_spec} → pages {page_range}")
+    #     else:
+    #         console.print(f"  Single: page {group.pages[0]}")
+
     for group in groups:
-        if group.is_range:
-            page_range = f"{min(group.pages)}-{max(group.pages)}" if len(group.pages) > 1 else str(group.pages[0])
-            console.print(f"  Range: {group.original_spec} → pages {page_range}")
-        else:
+        if not group.pages:  # Handle empty groups
+            console.print(f"  Empty: {group.original_spec} (no matches)")
+            continue
+            
+        if len(group.pages) == 1:
             console.print(f"  Single: page {group.pages[0]}")
+        else:
+            if group.is_range and len(group.pages) > 1:
+                # Check if it's a consecutive range
+                sorted_pages = sorted(group.pages)
+                is_consecutive = all(sorted_pages[i] == sorted_pages[i-1] + 1 
+                                    for i in range(1, len(sorted_pages)))
+                
+                if is_consecutive:
+                    console.print(f"  Range: {group.original_spec} → pages {sorted_pages[0]}-{sorted_pages[-1]}")
+                else:
+                    console.print(f"  Group: {group.original_spec} → {len(group.pages)} pages {sorted_pages}")
+            else:
+                sorted_pages = sorted(group.pages)
+                console.print(f"  Group: {group.original_spec} → {len(group.pages)} pages {sorted_pages}")
     
+
+
     console.print("\nHow would you like to extract these pages?")
     console.print("  1. As a single document (combine all pages)")
     console.print("  2. As separate documents (one file per page)")
