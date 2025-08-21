@@ -353,11 +353,12 @@ class PageRangeParser:
         if part.lower() in ['all']:
             return True
         
-        # FIXED: Could be a numeric specification
+        # FIXED: Could be a numeric specification (like "first 3", "-5", etc.)
         if self._is_numeric_specification(part):
             return True
         
         # FIXED: Reject things like 'page' which are neither numbers nor valid patterns
+        # This fixes 'page 5 to page 10' being incorrectly accepted
         return False
     
     def _text_is_quoted(self, text: str, search_text: str) -> bool:
@@ -411,7 +412,8 @@ class PageRangeParser:
     
     def _try_advanced_patterns(self, range_str: str) -> tuple[set[int], str, list[PageGroup]] | None:
         """Try to parse as advanced patterns (boolean, range patterns, etc.)."""
-        # Check for boolean expressions first
+        # IMPORTANT: Check for boolean expressions FIRST before single patterns
+        # This prevents complex boolean expressions from being misinterpreted as single patterns
         if looks_like_boolean_expression(range_str):
             try:
                 pages, groups = parse_boolean_expression(range_str, self.pdf_path, self.total_pages)
@@ -420,7 +422,7 @@ class PageRangeParser:
             except Exception as e:
                 raise ValueError(f"Boolean expression error: {e}")
         
-        # Check for range patterns
+        # Check for range patterns second
         if looks_like_range_pattern(range_str):
             try:
                 from pdf_manipulator.core.page_range.patterns import parse_range_pattern_with_groups
@@ -430,7 +432,9 @@ class PageRangeParser:
             except Exception as e:
                 raise ValueError(f"Range pattern error: {e}")
         
-        # Check for single patterns
+        # Check for single patterns LAST (to avoid conflicts with boolean expressions)
+        # This ensures that complex expressions like "(contains:'A' | contains:'B')" 
+        # are handled as boolean expressions, not rejected as invalid single patterns
         if looks_like_pattern(range_str):
             try:
                 pages = parse_pattern_expression(range_str, self.pdf_path, self.total_pages)
@@ -469,7 +473,14 @@ class PageRangeParser:
         """Parse a single range part and return pages in the intended order."""
         part = part.strip()
         
-        # Try as advanced pattern first (if PDF available)
+        # Try as special keyword first
+        result = self._try_special_keywords(part)
+        if result:
+            pages_set, _, groups = result
+            return sorted(list(pages_set)), part
+        
+        # Try as advanced pattern BEFORE numeric (if PDF available)
+        # This ensures boolean expressions are caught before individual patterns
         if self.pdf_path:
             result = self._try_advanced_patterns(part)
             if result:
@@ -481,13 +492,7 @@ class PageRangeParser:
                 else:
                     return sorted(list(pages_set)), part
         
-        # Try as special keyword
-        result = self._try_special_keywords(part)
-        if result:
-            pages_set, _, groups = result
-            return sorted(list(pages_set)), part
-        
-        # Parse as numeric range
+        # Parse as numeric range (fallback)
         return self._parse_numeric_range_for_group(part)
     
     def _get_ordered_pages_from_groups(self, groups: list[PageGroup], fallback_pages: set[int] = None) -> list[int]:
