@@ -1,8 +1,8 @@
 """
-Corrected Boolean Expression Processing - Quote-Aware Version
+Corrected Boolean Expression Processing - No Comma Detection
 File: pdf_manipulator/core/page_range/boolean.py
 
-FIXED: Now properly handles commas inside quoted strings in boolean expressions.
+FIXED: Removed comma detection logic since comma parsing now happens at top level.
 """
 
 import re
@@ -19,12 +19,8 @@ def looks_like_boolean_expression(range_str: str) -> bool:
     """
     Check if string looks like a boolean expression.
     
-    FIXED: Now handles commas inside quoted strings correctly.
+    FIXED: No comma detection - that happens at parser level now.
     """
-    # Don't treat comma-separated lists as boolean expressions
-    if _looks_like_comma_separated_list(range_str):
-        return False
-    
     # Check for boolean operators outside quotes
     operators = [' & ', ' | ', '!']
     has_operators = any(op in range_str for op in operators)
@@ -63,8 +59,6 @@ def parse_boolean_expression(expr: str, pdf_path: Path, total_pages: int) -> lis
 def has_advanced_patterns(expression: str) -> bool:
     """
     Check if boolean expression contains advanced range patterns.
-    
-    This is just a wrapper around the real detection logic.
     """
     supervisor = UnifiedBooleanSupervisor(Path("dummy"), 1)
     patterns = supervisor._extract_advanced_patterns(expression)
@@ -73,17 +67,6 @@ def has_advanced_patterns(expression: str) -> bool:
 
 #################################################################################################
 # Private helper functions
-
-def _looks_like_comma_separated_list(range_str: str) -> bool:
-    """Check if this looks like a comma-separated list."""
-    from pdf_manipulator.core.page_range.patterns import split_comma_respecting_quotes
-    
-    if ',' not in range_str:
-        return False
-    
-    parts = split_comma_respecting_quotes(range_str)
-    return len([p for p in parts if p.strip()]) >= 2
-
 
 def _has_unquoted_parentheses(text: str) -> bool:
     """Check if text contains parentheses outside quoted strings."""
@@ -165,7 +148,7 @@ class UnifiedBooleanSupervisor:
     - Advanced (with range patterns): Magazine processing pattern
     - No circular dependencies: Self-contained boolean logic
     
-    FIXED: Now uses quote-aware boolean detection.
+    FIXED: Complete implementation with proper tokenization and boolean logic.
     """
     
     def __init__(self, pdf_path: Path, total_pages: int):
@@ -264,41 +247,312 @@ class UnifiedBooleanSupervisor:
         return self._process_simple_boolean(expression)
     
     def _process_simple_boolean(self, expression: str) -> tuple[list[int], list[PageGroup]]:
-        """Process simple boolean expressions with standard precedence."""
+        """
+        Process simple boolean expressions with proper precedence.
+        
+        FIXED: Complete implementation with tokenization and precedence handling.
+        """
         try:
-            # Use existing boolean parsing logic if available
-            from pdf_manipulator.core.page_range.patterns import parse_pattern_expression, parse_single_expression
+            # Tokenize the expression
+            tokens = self._tokenize_expression(expression)
             
-            # Split and evaluate each component
-            components = self._split_boolean_components(expression)
-            all_pages = set()
-            groups = []
+            # Validate parentheses balance
+            valid, error_msg = self._validate_parentheses_balance(tokens)
+            if not valid:
+                raise ValueError(f"Parentheses error: {error_msg}")
             
-            for component in components:
-                try:
-                    # Try to parse each component
-                    if ':' in component:
-                        pages = parse_pattern_expression(component, self.pdf_path, self.total_pages)
-                    else:
-                        pages = parse_single_expression(component, self.pdf_path, self.total_pages)
-                    
-                    all_pages.update(pages)
-                    
-                    # Create group for this component
-                    groups.append(PageGroup(
-                        pages=pages,
-                        is_range=len(pages) > 1,
-                        original_spec=component
-                    ))
-                    
-                except Exception as e:
-                    # Skip invalid components
-                    continue
+            # Resolve parentheses recursively
+            tokens = self._resolve_parentheses(tokens)
             
-            return list(all_pages), groups
+            # Evaluate the expression with operator precedence
+            result_pages = self._evaluate_with_precedence(tokens)
+            
+            # Create groups from result
+            groups = self._create_consecutive_groups(result_pages, expression)
+            
+            return result_pages, groups
             
         except Exception as e:
             raise ValueError(f"Failed to parse boolean expression '{expression}': {e}")
+    
+    def _tokenize_expression(self, expr: str) -> list[str]:
+        """
+        Tokenize boolean expression into operators and operands.
+        
+        FIXED: Parentheses are now separate tokens.
+        """
+        tokens = []
+        current_token = ""
+        in_quote = False
+        quote_char = None
+        i = 0
+        
+        while i < len(expr):
+            char = expr[i]
+            
+            # Handle escapes
+            if char == '\\' and i + 1 < len(expr):
+                current_token += char + expr[i + 1]
+                i += 2
+                continue
+                
+            # Handle quotes
+            if char in ['"', "'"] and not in_quote:
+                in_quote = True
+                quote_char = char
+                current_token += char
+            elif char == quote_char and in_quote:
+                in_quote = False
+                quote_char = None
+                current_token += char
+            elif not in_quote:
+                # FIXED: Handle parentheses as separate tokens
+                if char == '(':
+                    # Save any accumulated token
+                    if current_token.strip():
+                        tokens.append(current_token.strip())
+                        current_token = ""
+                    # Add opening parenthesis as separate token
+                    tokens.append('(')
+                elif char == ')':
+                    # Save any accumulated token
+                    if current_token.strip():
+                        tokens.append(current_token.strip())
+                        current_token = ""
+                    # Add closing parenthesis as separate token
+                    tokens.append(')')
+                # Handle operators with exact spacing
+                elif expr[i:i+4] == ' & !':
+                    if current_token.strip():
+                        tokens.append(current_token.strip())
+                    tokens.append('&!')
+                    current_token = ""
+                    i += 4
+                    continue
+                elif expr[i:i+3] == ' & ':
+                    if current_token.strip():
+                        tokens.append(current_token.strip())
+                    tokens.append('&')
+                    current_token = ""
+                    i += 3
+                    continue
+                elif expr[i:i+3] == ' | ':
+                    if current_token.strip():
+                        tokens.append(current_token.strip())
+                    tokens.append('|')
+                    current_token = ""
+                    i += 3
+                    continue
+                elif char == '!' and (i == 0 or expr[i-1].isspace()):
+                    if current_token.strip():
+                        tokens.append(current_token.strip())
+                    tokens.append('!')
+                    current_token = ""
+                else:
+                    current_token += char
+            else:
+                current_token += char
+            
+            i += 1
+        
+        # Add final token if any
+        if current_token.strip():
+            tokens.append(current_token.strip())
+        
+        return tokens
+    
+    def _validate_parentheses_balance(self, tokens: list[str]) -> tuple[bool, str]:
+        """Validate that parentheses are balanced."""
+        stack = []
+        for i, token in enumerate(tokens):
+            if token == '(':
+                stack.append(i)
+            elif token == ')':
+                if not stack:
+                    return False, f"Unmatched closing parenthesis at position {i}"
+                stack.pop()
+        
+        if stack:
+            return False, f"Unmatched opening parenthesis at position {stack[0]}"
+        
+        return True, ""
+    
+    def _resolve_parentheses(self, tokens: list[str]) -> list[str]:
+        """
+        Resolve parenthetical expressions recursively.
+        
+        FIXED: Can now find separate '(' and ')' tokens.
+        """
+        while '(' in tokens:
+            # Find innermost parentheses
+            start_idx = -1
+            for i, token in enumerate(tokens):
+                if token == '(':
+                    start_idx = i
+                elif token == ')' and start_idx != -1:
+                    end_idx = i
+                    
+                    # Extract sub-expression
+                    sub_tokens = tokens[start_idx + 1:end_idx]
+                    
+                    # Recursively evaluate sub-expression
+                    sub_result = self._evaluate_with_precedence(sub_tokens)
+                    
+                    # Replace parenthetical group with result
+                    tokens = tokens[:start_idx] + [sub_result] + tokens[end_idx + 1:]
+                    break
+        
+        return tokens
+    
+    def _evaluate_with_precedence(self, tokens: list[str]) -> list[int]:
+        """
+        Evaluate tokens with proper operator precedence.
+        
+        Precedence: NOT (!) > AND (&) > OR (|)
+        """
+        if not tokens:
+            return []
+        
+        # If single token (from resolved parentheses), return it
+        if len(tokens) == 1:
+            token = tokens[0]
+            if isinstance(token, list):
+                return token
+            return self._evaluate_single_token(token)
+        
+        # Process NOT operators first (highest precedence)
+        tokens = self._process_not_operators(tokens)
+        
+        # Process AND operators next
+        tokens = self._process_and_operators(tokens)
+        
+        # Process OR operators last (lowest precedence)
+        tokens = self._process_or_operators(tokens)
+        
+        # Should have single result
+        if len(tokens) == 1:
+            result = tokens[0]
+            if isinstance(result, list):
+                return result
+            return self._evaluate_single_token(result)
+        
+        raise ValueError(f"Could not resolve expression to single result: {tokens}")
+    
+    def _process_not_operators(self, tokens: list[str]) -> list[str]:
+        """Process NOT operators with highest precedence."""
+        result = []
+        i = 0
+        
+        while i < len(tokens):
+            if tokens[i] == '!' and i + 1 < len(tokens):
+                # Apply NOT to next operand
+                operand = tokens[i + 1]
+                if isinstance(operand, list):
+                    operand_pages = operand
+                else:
+                    operand_pages = self._evaluate_single_token(operand)
+                
+                # NOT operation: all pages except operand pages
+                all_pages = set(range(1, self.total_pages + 1))
+                not_pages = list(all_pages - set(operand_pages))
+                
+                result.append(not_pages)
+                i += 2
+            elif tokens[i] == '&!' and i + 1 < len(tokens):
+                # Handle combined AND NOT
+                operand = tokens[i + 1]
+                if isinstance(operand, list):
+                    operand_pages = operand
+                else:
+                    operand_pages = self._evaluate_single_token(operand)
+                
+                # NOT operation: all pages except operand pages
+                all_pages = set(range(1, self.total_pages + 1))
+                not_pages = list(all_pages - set(operand_pages))
+                
+                # Insert AND operator and NOT result
+                result.append('&')
+                result.append(not_pages)
+                i += 2
+            else:
+                result.append(tokens[i])
+                i += 1
+        
+        return result
+    
+    def _process_and_operators(self, tokens: list[str]) -> list[str]:
+        """Process AND operators."""
+        while '&' in tokens:
+            for i in range(len(tokens)):
+                if tokens[i] == '&':
+                    if i == 0 or i >= len(tokens) - 1:
+                        raise ValueError("AND operator missing operand")
+                    
+                    left = tokens[i - 1]
+                    right = tokens[i + 1]
+                    
+                    # Evaluate operands
+                    if isinstance(left, list):
+                        left_pages = left
+                    else:
+                        left_pages = self._evaluate_single_token(left)
+                    
+                    if isinstance(right, list):
+                        right_pages = right
+                    else:
+                        right_pages = self._evaluate_single_token(right)
+                    
+                    # AND operation: intersection
+                    and_result = list(set(left_pages) & set(right_pages))
+                    
+                    # Replace the three tokens with result
+                    tokens = tokens[:i-1] + [and_result] + tokens[i+2:]
+                    break
+        
+        return tokens
+    
+    def _process_or_operators(self, tokens: list[str]) -> list[str]:
+        """Process OR operators."""
+        while '|' in tokens:
+            for i in range(len(tokens)):
+                if tokens[i] == '|':
+                    if i == 0 or i >= len(tokens) - 1:
+                        raise ValueError("OR operator missing operand")
+                    
+                    left = tokens[i - 1]
+                    right = tokens[i + 1]
+                    
+                    # Evaluate operands
+                    if isinstance(left, list):
+                        left_pages = left
+                    else:
+                        left_pages = self._evaluate_single_token(left)
+                    
+                    if isinstance(right, list):
+                        right_pages = right
+                    else:
+                        right_pages = self._evaluate_single_token(right)
+                    
+                    # OR operation: union
+                    or_result = list(set(left_pages) | set(right_pages))
+                    
+                    # Replace the three tokens with result
+                    tokens = tokens[:i-1] + [or_result] + tokens[i+2:]
+                    break
+        
+        return tokens
+    
+    def _evaluate_single_token(self, token: str) -> list[int]:
+        """Evaluate a single token (pattern or expression)."""
+        try:
+            from pdf_manipulator.core.page_range.patterns import parse_pattern_expression, parse_single_expression, looks_like_pattern
+            
+            if looks_like_pattern(token):
+                return parse_pattern_expression(token, self.pdf_path, self.total_pages)
+            else:
+                return parse_single_expression(token, self.pdf_path, self.total_pages)
+        except Exception as e:
+            raise ValueError(f"Failed to evaluate token '{token}': {e}")
     
     def _evaluate_simple_expression(self, expression: str) -> list[int]:
         """Evaluate a simple (non-boolean) expression."""
@@ -324,33 +578,27 @@ class UnifiedBooleanSupervisor:
         if not pages:
             return []
         
-        # Sort pages to find consecutive runs
         sorted_pages = sorted(pages)
         groups = []
         current_group = [sorted_pages[0]]
         
         for i in range(1, len(sorted_pages)):
             if sorted_pages[i] == sorted_pages[i-1] + 1:
-                # Consecutive page
                 current_group.append(sorted_pages[i])
             else:
-                # Gap found - create group for current run
+                # Create group for current consecutive sequence
                 groups.append(PageGroup(
-                    pages=current_group.copy(),
+                    pages=current_group,
                     is_range=len(current_group) > 1,
-                    original_spec=f"{description} (pages {current_group[0]}-{current_group[-1]})" 
-                               if len(current_group) > 1 
-                               else f"{description} (page {current_group[0]})"
+                    original_spec=description
                 ))
                 current_group = [sorted_pages[i]]
         
-        # Add final group
+        # Add the last group
         groups.append(PageGroup(
-            pages=current_group.copy(),
+            pages=current_group,
             is_range=len(current_group) > 1,
-            original_spec=f"{description} (pages {current_group[0]}-{current_group[-1]})" 
-                       if len(current_group) > 1 
-                       else f"{description} (page {current_group[0]})"
+            original_spec=description
         ))
         
         return groups

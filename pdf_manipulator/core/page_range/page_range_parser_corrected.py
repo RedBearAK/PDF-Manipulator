@@ -1,11 +1,15 @@
 """
-Complete Page Range Parser - Fixed Architecture
-File: pdf_manipulator/core/page_range/page_range_parser.py
+Corrected Page Range Parser with Proper Separation of Concerns
+File: pdf_manipulator/core/page_range/page_range_parser_corrected.py
 
-ARCHITECTURE FIX: Comma parsing happens FIRST, before any type detection.
+FIXED: Comma parsing happens FIRST, before any type detection.
 
-This is a complete replacement that preserves all existing functionality
-while fixing the fundamental architectural issues.
+Architecture:
+1. TOP LEVEL: Split on commas (respecting quotes)
+2. MIDDLE LEVEL: For each argument, detect type 
+3. BOTTOM LEVEL: Process each argument by type
+
+This prevents the circular dependencies and quote handling issues.
 """
 
 import re
@@ -39,21 +43,17 @@ except ImportError:
 console = Console()
 
 
-class PageRangeParser:
+class CorrectedPageRangeParser:
     """
-    Enhanced page range parser with fixed architecture.
+    Page range parser with proper separation of concerns.
     
-    ARCHITECTURE FIX: Comma parsing happens FIRST, before any type detection.
-    This eliminates circular dependencies and quote handling conflicts.
+    Key principle: Comma parsing happens FIRST, before any type detection.
     
-    Features:
-    - Numeric arbitrary reordering: "10,5,15,2" → [10, 5, 15, 2]
-    - Reverse ranges: "10-7" → [10, 9, 8, 7]
-    - File selectors: "file:pages.txt" → loads from file
-    - Smart selector comma support: "1-5,contains:'Chapter',type:image,10-15"
-    - Boolean expression comma support: "contains:'A' & type:text,5-10"
-    - Range pattern comma support: "1-3,contains:'Start' to contains:'End',20"
-    - All existing syntax preserved
+    Architecture:
+    1. Split input on commas (respecting quotes) → individual arguments
+    2. For each argument, detect its type (boolean, pattern, simple range)
+    3. Process each argument according to its type
+    4. Combine results preserving order when appropriate
     """
     
     def __init__(self, total_pages: int, pdf_path: Path = None):
@@ -75,9 +75,9 @@ class PageRangeParser:
     
     def parse(self, range_str: str) -> tuple[set[int], str, list[PageGroup]]:
         """
-        Main entry point with fixed architecture.
+        Main entry point with corrected architecture.
         
-        ARCHITECTURE FIX: Comma parsing happens FIRST, before any type detection.
+        FIXED: Comma parsing happens FIRST, before any type detection.
         """
         # Reset state for fresh parsing
         self._reset_state()
@@ -143,10 +143,7 @@ class PageRangeParser:
                 raise ValueError(f"Error parsing argument '{arg}': {e}")
         
         # Create combined description
-        if len(descriptions) == 1:
-            combined_desc = descriptions[0]
-        else:
-            combined_desc = "Comma-separated: " + ", ".join(descriptions)
+        combined_desc = "Comma-separated: " + ", ".join(descriptions)
         
         return all_pages, combined_desc, self.ordered_groups
     
@@ -237,15 +234,7 @@ class PageRangeParser:
             group = PageGroup(pages, True, arg)
             return set(pages), "All pages", [group]
         
-        if arg_lower == 'odd':
-            pages = list(range(1, self.total_pages + 1, 2))
-            group = PageGroup(pages, False, arg)
-            return set(pages), "Odd pages", [group]
-        
-        if arg_lower == 'even':
-            pages = list(range(2, self.total_pages + 1, 2))
-            group = PageGroup(pages, False, arg)
-            return set(pages), "Even pages", [group]
+        # Add other special keywords as needed
         
         return None
     
@@ -296,8 +285,6 @@ class PageRangeParser:
             if 1 <= page_num <= self.total_pages:
                 group = PageGroup([page_num], False, arg)
                 return {page_num}, f"Page {page_num}", [group]
-            else:
-                raise ValueError(f"Page number {page_num} out of range (1-{self.total_pages})")
         
         # Range like "5-10" or "10-5" (reverse)
         if re.match(r'^\d+-\d+$', arg):
@@ -320,9 +307,7 @@ class PageRangeParser:
                 group = PageGroup(pages, True, arg)
                 return set(pages), desc, [group]
                 
-            except ValueError as e:
-                if "out of range" in str(e):
-                    raise e
+            except ValueError:
                 pass
         
         # First/last patterns
@@ -340,13 +325,6 @@ class PageRangeParser:
             pages = list(range(start, self.total_pages + 1))
             group = PageGroup(pages, True, arg)
             return set(pages), f"Last {count} pages", [group]
-        
-        # Slicing patterns like "::2" (every 2nd page)
-        if re.match(r'^::\d+$', arg):
-            step = int(arg[2:])
-            pages = list(range(1, self.total_pages + 1, step))
-            group = PageGroup(pages, False, arg)
-            return set(pages), f"Every {step} pages", [group]
         
         return None
     
@@ -382,8 +360,8 @@ class PageRangeParser:
         FIXED: No comma checking - that already happened at top level.
         """
         return any([
-            arg.startswith(('contains:', 'regex:', 'line-starts:', 'type:', 'size:')),
-            ':' in arg and any(arg.lower().startswith(p + ':') for p in ['contains', 'regex', 'line-starts', 'type', 'size']),
+            arg.startswith(('contains', 'regex', 'line-starts', 'type', 'size')),
+            ':' in arg and any(arg.lower().startswith(p) for p in ['contains', 'regex', 'line-starts', 'type', 'size']),
         ])
     
     def _has_unquoted_parentheses(self, text: str) -> bool:
