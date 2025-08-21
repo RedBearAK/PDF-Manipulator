@@ -1,12 +1,11 @@
 """
-Fixed Boolean Expression Processing
+Fixed Boolean Expression Processing - API Compatible Version
 File: pdf_manipulator/core/page_range/boolean.py
 
-This fixes the parentheses tokenization issue that was preventing proper parsing
-of expressions like (contains:"SITKA AK" | contains:"SITKA, AK").
-
-The key fix is in _tokenize_expression to emit separate ( and ) tokens while
-maintaining proper quote and operator handling.
+This preserves the existing API while fixing the parentheses tokenization issue.
+The key functions that need to be exported are maintained:
+- looks_like_boolean_expression()
+- evaluate_boolean_expression_with_groups()
 """
 
 import re
@@ -570,16 +569,46 @@ class UnifiedBooleanSupervisor:
         return groups
 
 
-# Public interface functions
+# ============================================================================
+# PUBLIC API FUNCTIONS - These maintain the existing interface
+# ============================================================================
+
 def looks_like_boolean_expression(range_str: str) -> bool:
     """Check if string looks like a boolean expression."""
-    supervisor = UnifiedBooleanSupervisor(Path("/dummy"), 1)
+    # Create temporary supervisor for detection
+    supervisor = UnifiedBooleanSupervisor(Path("dummy"), 1)
     return supervisor._looks_like_boolean_expression(range_str)
 
 
-def parse_boolean_expression(expression: str, pdf_path: Path, 
-                           total_pages: int) -> tuple[list[int], list[PageGroup]]:
-    """Parse a boolean expression and return pages and groups."""
+def parse_boolean_expression(expr: str, pdf_path, total_pages) -> list[int]:
+    """
+    Parse boolean expressions using the unified supervisor.
+    
+    This handles both simple and advanced expressions with proper group preservation.
+    """
+    supervisor = UnifiedBooleanSupervisor(pdf_path, total_pages)
+    pages, groups = supervisor.evaluate(expr)
+    return pages
+
+
+def has_advanced_patterns(expression: str) -> bool:
+    """
+    Check if boolean expression contains advanced range patterns.
+    
+    This is just a wrapper around the real detection logic.
+    """
+    supervisor = UnifiedBooleanSupervisor(Path("dummy"), 1)
+    patterns = supervisor._extract_advanced_patterns(expression)
+    return len(patterns) > 0
+
+
+def evaluate_boolean_expression_with_groups(expression: str, pdf_path: Path, 
+                                            total_pages: int) -> tuple[list[int], list[PageGroup]]:
+    """
+    Main entry point for all boolean expression evaluation with group preservation.
+    
+    This is the function that the existing code expects to import.
+    """
     supervisor = UnifiedBooleanSupervisor(pdf_path, total_pages)
     return supervisor.evaluate(expression)
 
