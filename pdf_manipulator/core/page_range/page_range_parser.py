@@ -25,6 +25,7 @@ from pdf_manipulator.core.page_range.patterns import (
     looks_like_pattern,
     looks_like_range_pattern,
     parse_pattern_expression,
+    split_comma_respecting_quotes
 )
 
 from pdf_manipulator.core.page_range.boolean import (
@@ -136,19 +137,18 @@ class PageRangeParser:
         
         ENHANCED: Now supports smart selectors, boolean expressions, and range patterns
         alongside the original numeric specifications.
+        FIXED: Now uses quote-aware comma splitting.
         """
         if ',' not in range_str:
             return False
-            
-        # Check if all parts are valid comma-separated specifications
-        parts = [p.strip() for p in range_str.split(',')]
+        
+        # FIXED: Use quote-aware comma splitting
+        parts = split_comma_respecting_quotes(range_str)
+        
         for part in parts:
-            # Skip file selectors (they should be expanded at this point)
-            if self.file_selector and self.file_selector.is_file_selector(part):
-                continue
-                
+            part = part.strip()
+            # Check each part using enhanced validation
             if not self._is_valid_comma_specification(part):
-                # If any part is invalid, fall back to standard processing
                 return False
         
         return True
@@ -458,9 +458,11 @@ class PageRangeParser:
     
     def _parse_comma_separated_parts_ordered(self, range_str: str):
         """Parse comma-separated parts while preserving order if needed."""
-        parts = [p.strip() for p in range_str.split(',')]
+        # FIXED: Use quote-aware comma splitting
+        parts = split_comma_respecting_quotes(range_str)
         
         for part in parts:
+            part = part.strip()  # Clean up whitespace
             try:
                 # File selectors should already be expanded at this point
                 if self.file_selector and self.file_selector.is_file_selector(part):

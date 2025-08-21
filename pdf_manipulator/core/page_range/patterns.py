@@ -199,24 +199,25 @@ def _looks_like_comma_separated_list_pattern(range_str: str) -> bool:
     Check if string looks like a comma-separated list that starts with a pattern.
     
     This prevents comma-separated lists from being misidentified as single patterns.
+    FIXED: Now uses quote-aware comma splitting.
     """
     if ',' not in range_str:
         return False
     
-    # Split by comma and check if we have multiple distinct expressions
-    parts = [p.strip() for p in range_str.split(',')]
+    # FIXED: Split by comma respecting quoted strings
+    parts = split_comma_respecting_quotes(range_str)
     
     # Need at least 2 parts to be a list
     if len(parts) < 2:
         return False
     
     # If first part looks like a pattern but we have more parts, it's probably a list
-    first_part = parts[0]
+    first_part = parts[0].strip()
     if _is_individual_pattern(first_part):
         # Check if other parts also look like valid individual expressions
         valid_expressions = 0
         for part in parts[1:]:  # Skip first part
-            if _is_individual_expression_pattern(part):
+            if _is_individual_expression_pattern(part.strip()):
                 valid_expressions += 1
         
         # If we have multiple valid expressions, treat as comma-separated
@@ -229,8 +230,8 @@ def _is_individual_pattern(expr: str) -> bool:
     """Check if expression looks like an individual pattern (not comma-separated)."""
     expr = expr.strip()
     
-    # Pattern expressions (contains:, type:, etc.) without commas
-    if ':' in expr and ',' not in expr:
+    # Pattern expressions (contains:, type:, etc.) without commas OUTSIDE quotes
+    if ':' in expr and not _has_unquoted_commas(expr):
         return any(expr.lower().startswith(p) for p in ['contains', 'type', 'size', 'regex', 'line-starts'])
     
     return False
@@ -256,17 +257,47 @@ def _is_individual_expression_pattern(expr: str) -> bool:
     if expr.lower() in ['all']:
         return True
     
-    # Pattern expressions (contains:, type:, etc.)
+    # Pattern expressions (contains:, type:, etc.) - commas inside quotes are OK
     if ':' in expr and any(expr.lower().startswith(p) for p in ['contains', 'type', 'size', 'regex']):
         return True
     
-    # Boolean expressions (but without commas)
-    if ('&' in expr or '|' in expr or expr.startswith('!')) and ',' not in expr:
+    # Boolean expressions (but without commas OUTSIDE quotes)
+    if ('&' in expr or '|' in expr or expr.startswith('!')) and not _has_unquoted_commas(expr):
         return True
     
     # Range expressions (first, last, etc.)
     if any(expr.lower().startswith(w) for w in ['first', 'last']):
         return True
+    
+    return False
+
+
+def _has_unquoted_commas(text: str) -> bool:
+    """Check if text contains commas outside of quoted strings."""
+    in_quote = False
+    quote_char = None
+    i = 0
+    
+    while i < len(text):
+        char = text[i]
+        
+        # Handle escape sequences
+        if char == '\\' and i + 1 < len(text):
+            i += 2
+            continue
+        
+        # Handle quote start/end
+        if char in ['"', "'"] and not in_quote:
+            in_quote = True
+            quote_char = char
+        elif char == quote_char and in_quote:
+            in_quote = False
+            quote_char = None
+        elif char == ',' and not in_quote:
+            # Found comma outside quotes
+            return True
+        
+        i += 1
     
     return False
 
@@ -483,6 +514,65 @@ def _find_pages_by_size(pdf_path: Path, size_condition: str) -> list[int]:
         
     except Exception as e:
         raise ValueError(f"Error analyzing page sizes: {e}")
+
+
+def split_comma_respecting_quotes(text: str) -> list[str]:
+    """
+    Split text on commas while respecting quoted strings.
+    
+    This function splits on commas that are NOT inside quoted strings,
+    properly handling both single and double quotes.
+    
+    Examples:
+        'a,b,c' → ['a', 'b', 'c']
+        'contains:"CORDOVA, AK",contains:"CRAIG, AK"' → ['contains:"CORDOVA, AK"', 'contains:"CRAIG, AK"']
+        "a,'b,c',d" → ['a', "'b,c'", 'd']
+    """
+    if ',' not in text:
+        return [text]
+    
+    parts = []
+    current_part = ""
+    in_quote = False
+    quote_char = None
+    i = 0
+    
+    while i < len(text):
+        char = text[i]
+        
+        # Handle escape sequences
+        if char == '\\' and i + 1 < len(text):
+            # Add the escape and the escaped character
+            current_part += char + text[i + 1]
+            i += 2
+            continue
+        
+        # Handle quote start/end
+        if char in ['"', "'"] and not in_quote:
+            # Starting a quote
+            in_quote = True
+            quote_char = char
+            current_part += char
+        elif char == quote_char and in_quote:
+            # Ending the quote
+            in_quote = False
+            quote_char = None
+            current_part += char
+        elif char == ',' and not in_quote:
+            # Comma outside quotes - split here
+            parts.append(current_part.strip())
+            current_part = ""
+        else:
+            # Regular character
+            current_part += char
+        
+        i += 1
+    
+    # Add the last part
+    if current_part or text.endswith(','):
+        parts.append(current_part.strip())
+    
+    return parts
 
 
 # End of file #
