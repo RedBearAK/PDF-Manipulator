@@ -575,9 +575,82 @@ class UnifiedBooleanSupervisor:
 
 def looks_like_boolean_expression(range_str: str) -> bool:
     """Check if string looks like a boolean expression."""
+    # FIXED: Don't treat comma-separated lists as boolean expressions
+    # If this looks like a comma-separated list, let comma parsing handle it
+    if _looks_like_comma_separated_list(range_str):
+        return False
+    
     # Create temporary supervisor for detection
     supervisor = UnifiedBooleanSupervisor(Path("dummy"), 1)
     return supervisor._looks_like_boolean_expression(range_str)
+
+
+def _looks_like_comma_separated_list(range_str: str) -> bool:
+    """
+    Check if string looks like a comma-separated list of expressions.
+    
+    This helps prevent comma-separated lists from being misidentified 
+    as boolean expressions.
+    """
+    if ',' not in range_str:
+        return False
+    
+    # Split by comma and check if we have multiple distinct expressions
+    parts = [p.strip() for p in range_str.split(',')]
+    
+    # Need at least 2 parts to be a list
+    if len(parts) < 2:
+        return False
+    
+    # Check if multiple parts look like individual expressions
+    # (patterns, numbers, keywords, or boolean expressions)
+    valid_individual_expressions = 0
+    
+    for part in parts:
+        if not part:
+            continue
+            
+        # Check if this part looks like an individual expression
+        if (_is_individual_expression(part)):
+            valid_individual_expressions += 1
+    
+    # If we have multiple valid individual expressions, treat as comma-separated
+    return valid_individual_expressions >= 2
+
+
+def _is_individual_expression(expr: str) -> bool:
+    """Check if expression looks like an individual (non-comma-separated) expression."""
+    expr = expr.strip()
+    
+    # Numeric specifications
+    if expr.isdigit():
+        return True
+    if '-' in expr and not expr.startswith('-') and not expr.endswith('-'):
+        try:
+            parts = expr.split('-', 1)
+            int(parts[0])
+            int(parts[1])
+            return True
+        except ValueError:
+            pass
+    
+    # Special keywords
+    if expr.lower() in ['all']:
+        return True
+    
+    # Pattern expressions (contains:, type:, etc.)
+    if ':' in expr and any(expr.lower().startswith(p) for p in ['contains', 'type', 'size', 'regex']):
+        return True
+    
+    # Boolean expressions (but without commas)
+    if ('&' in expr or '|' in expr or expr.startswith('!')) and ',' not in expr:
+        return True
+    
+    # Range expressions (first, last, etc.)
+    if any(expr.lower().startswith(w) for w in ['first', 'last']):
+        return True
+    
+    return False
 
 
 def parse_boolean_expression(expr: str, pdf_path, total_pages) -> list[int]:
