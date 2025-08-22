@@ -1,11 +1,18 @@
 """
-Complete Page Range Parser - Fixed Architecture
+Enhanced Page Range Parser with Fixed Architecture
 File: pdf_manipulator/core/page_range/page_range_parser.py
 
 ARCHITECTURE FIX: Comma parsing happens FIRST, before any type detection.
+This eliminates circular dependencies and quote handling conflicts.
 
-This is a complete replacement that preserves all existing functionality
-while fixing the fundamental architectural issues.
+Features:
+- Numeric arbitrary reordering: "10,5,15,2" → [10, 5, 15, 2]
+- Reverse ranges: "10-7" → [10, 9, 8, 7]  
+- File selectors: "file:pages.txt" → loads from file
+- Smart selector comma support: "1-5,contains:'Chapter',type:image,10-15"
+- Boolean expression comma support: "contains:'A' & type:text,5-10"
+- Range pattern comma support: "1-3,contains:'Start' to contains:'End',20"
+- All existing syntax preserved
 """
 
 import re
@@ -46,14 +53,7 @@ class PageRangeParser:
     ARCHITECTURE FIX: Comma parsing happens FIRST, before any type detection.
     This eliminates circular dependencies and quote handling conflicts.
     
-    Features:
-    - Numeric arbitrary reordering: "10,5,15,2" → [10, 5, 15, 2]
-    - Reverse ranges: "10-7" → [10, 9, 8, 7]
-    - File selectors: "file:pages.txt" → loads from file
-    - Smart selector comma support: "1-5,contains:'Chapter',type:image,10-15"
-    - Boolean expression comma support: "contains:'A' & type:text,5-10"
-    - Range pattern comma support: "1-3,contains:'Start' to contains:'End',20"
-    - All existing syntax preserved
+    Key principle: Comma parsing → Type detection → Processing
     """
     
     def __init__(self, total_pages: int, pdf_path: Path = None):
@@ -364,8 +364,20 @@ class PageRangeParser:
             # Check for parentheses (also indicates boolean)
             return self._has_unquoted_parentheses(arg)
         
-        # Has operators - validate that operators are not all inside quotes
+        # Has operators - now validate that operators are not all inside quotes
         return not self._all_operators_are_quoted(arg)
+    
+    def _looks_like_pattern_no_comma_check(self, arg: str) -> bool:
+        """
+        Check if argument looks like pattern expression.
+        
+        FIXED: No comma checking - that already happened at top level.
+        """
+        # Simple pattern detection - no comma checking needed
+        return any([
+            arg.startswith(('contains:', 'regex:', 'line-starts:', 'type:', 'size:')),
+            ':' in arg and any(arg.lower().startswith(p + ':') for p in ['contains', 'regex', 'line-starts', 'type', 'size']),
+        ])
     
     def _looks_like_range_pattern_no_comma_check(self, arg: str) -> bool:
         """
@@ -375,108 +387,125 @@ class PageRangeParser:
         """
         return self._contains_unquoted_text(arg, ' to ')
     
-    def _looks_like_pattern_no_comma_check(self, arg: str) -> bool:
-        """
-        Check if argument looks like pattern expression.
-        
-        FIXED: No comma checking - that already happened at top level.
-        """
-        return any([
-            arg.startswith(('contains:', 'regex:', 'line-starts:', 'type:', 'size:')),
-            ':' in arg and any(arg.lower().startswith(p + ':') for p in ['contains', 'regex', 'line-starts', 'type', 'size']),
-        ])
-    
     def _has_unquoted_parentheses(self, text: str) -> bool:
         """Check if text contains parentheses outside quoted strings."""
-        in_quote = False
+        in_quotes = False
         quote_char = None
-        i = 0
         
-        while i < len(text):
-            char = text[i]
-            
-            if char == '\\' and i + 1 < len(text):
-                i += 2
-                continue
-            
-            if char in ['"', "'"] and not in_quote:
-                in_quote = True
+        for char in text:
+            if char in ['"', "'"] and not in_quotes:
+                in_quotes = True
                 quote_char = char
-            elif char == quote_char and in_quote:
-                in_quote = False
+            elif char == quote_char and in_quotes:
+                in_quotes = False
                 quote_char = None
-            elif char in ['(', ')'] and not in_quote:
+            elif char in ['(', ')'] and not in_quotes:
                 return True
-            
-            i += 1
         
         return False
     
     def _all_operators_are_quoted(self, text: str) -> bool:
-        """Check if ALL boolean operators are inside quoted strings."""
+        """Check if all boolean operators are inside quoted strings."""
         operators = [' & ', ' | ', '!']
         
-        for operator in operators:
-            if operator not in text:
-                continue
-            if self._operator_outside_quotes(text, operator):
+        for op in operators:
+            if op in text and not self._is_text_fully_quoted(text, op):
                 return False
         
         return True
     
-    def _operator_outside_quotes(self, text: str, operator: str) -> bool:
-        """Check if operator appears outside quoted strings."""
-        in_quote = False
-        quote_char = None
-        i = 0
+    def _is_text_fully_quoted(self, text: str, search_text: str) -> bool:
+        """Check if search_text appears only inside quotes."""
+        if search_text not in text:
+            return True
         
-        while i <= len(text) - len(operator):
-            char = text[i]
+        # Find all occurrences of search_text
+        start = 0
+        while True:
+            pos = text.find(search_text, start)
+            if pos == -1:
+                break
             
-            if char == '\\' and i + 1 < len(text):
-                i += 2
-                continue
+            # Check if this occurrence is inside quotes
+            if not self._is_position_quoted(text, pos):
+                return False
             
-            if char in ['"', "'"] and not in_quote:
-                in_quote = True
+            start = pos + len(search_text)
+        
+        return True
+    
+    def _is_position_quoted(self, text: str, pos: int) -> bool:
+        """Check if position is inside quoted string."""
+        in_quotes = False
+        quote_char = None
+        
+        for i, char in enumerate(text):
+            if i == pos:
+                return in_quotes
+            
+            if char in ['"', "'"] and not in_quotes:
+                in_quotes = True
                 quote_char = char
-            elif char == quote_char and in_quote:
-                in_quote = False
+            elif char == quote_char and in_quotes:
+                in_quotes = False
                 quote_char = None
-            elif not in_quote:
-                if text[i:i+len(operator)] == operator:
-                    return True
-            
-            i += 1
         
         return False
     
     def _contains_unquoted_text(self, text: str, search_text: str) -> bool:
         """Check if text contains search_text outside quoted strings."""
-        in_quote = False
-        quote_char = None
-        i = 0
+        if search_text not in text:
+            return False
         
-        while i <= len(text) - len(search_text):
-            char = text[i]
+        # Find all occurrences of search_text
+        start = 0
+        while True:
+            pos = text.find(search_text, start)
+            if pos == -1:
+                break
             
-            if char == '\\' and i + 1 < len(text):
-                i += 2
-                continue
+            # Check if this occurrence is outside quotes
+            if not self._is_position_quoted(text, pos):
+                return True
             
-            if char in ['"', "'"] and not in_quote:
-                in_quote = True
-                quote_char = char
-            elif char == quote_char and in_quote:
-                in_quote = False
-                quote_char = None
-            elif not in_quote:
-                if text[i:i+len(search_text)] == search_text:
-                    return True
-            
-            i += 1
+            start = pos + len(search_text)
         
         return False
+
+
+# Backward compatibility functions that other modules may depend on
+def parse_page_range(range_str: str, total_pages: int, pdf_path: Path = None) -> tuple[set[int], str, list[PageGroup]]:
+    """
+    Parse page range string and return pages, description, and groups.
+    
+    This is the main public API function that other modules use.
+    """
+    parser = PageRangeParser(total_pages, pdf_path)
+    return parser.parse(range_str)
+
+
+def get_ordered_pages_from_groups(groups: list[PageGroup], fallback_pages: set[int] = None) -> list[int]:
+    """
+    Extract ordered pages from page groups, respecting order preservation flags.
+    
+    This function is used by other modules to get the final page order.
+    """
+    if not groups:
+        return sorted(list(fallback_pages)) if fallback_pages else []
+    
+    ordered_pages = []
+    for group in groups:
+        # For ranges or preserve_order groups, maintain exact order
+        # For other groups, sort for backward compatibility
+        if (hasattr(group, 'is_range') and getattr(group, 'is_range', False)) or \
+           (hasattr(group, 'preserve_order') and getattr(group, 'preserve_order', False)):
+            # Preserve the exact order from this group
+            ordered_pages.extend(group.pages)
+        else:
+            # Use sorted order for this group (backward compatibility)
+            ordered_pages.extend(sorted(group.pages))
+    
+    return ordered_pages
 
 
 # End of file #

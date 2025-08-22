@@ -1,0 +1,10 @@
+contains:"CORDOVA, AK"
+contains:"CRAIG, AK"
+contains:"DILLINGHAM, AK"
+contains:"FALSE PASS, AK"
+contains:"KETCHIKAN, AK"
+contains:"KODIAK, AK"
+contains:"NAKN EK, AK" | contains:"EK, AK" | contains:"NAKNEK, AK"
+contains:"PETERSBURG, AK"
+contains:"SEWARD, AK"
+(contains:"SITKA AK" | contains:"SITKA, AK") & !(contains:"CRAIG, AK" & contains:"PETERSBURG, AK" & contains:"KETCHIKAN, AK" &contains:"VALDEZ, AK" & contains:"CORDOVA, AK" & contains:"SEWARD, AK" & contains:"KODIAK, AK" & contains:"NAKNEK, AK" &contains:"NAKN" & contains:"EK, AK" & contains:"DILLINGHAM, AK" & contains:"FALSE PASS, AK")
