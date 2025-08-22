@@ -195,8 +195,7 @@ def split_comma_respecting_quotes(text: str) -> list[str]:
         i += 1
     
     # Add final part
-    if current_part:
-        parts.append(current_part.strip())
+    parts.append(current_part.strip())
     
     return parts
 

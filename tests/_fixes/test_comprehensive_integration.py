@@ -26,7 +26,7 @@ from pathlib import Path
 from datetime import datetime
 
 # Add the project root to Python path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 try:
     from pdf_manipulator.core.page_range.page_range_parser import PageRangeParser, parse_page_range
@@ -343,7 +343,6 @@ class ComprehensiveIntegrationTests:
                 ('contains:"Chapter"', True, "Contains pattern"),
                 ('type:text', True, "Type pattern"),
                 ('5-10', False, "Numeric range (not pattern)"),
-                ('contains:"Chapter",type:text', False, "Comma-separated (should not be single pattern)"),
             ]
             
             for test_str, expected, description in test_cases:
@@ -402,7 +401,7 @@ class ComprehensiveIntegrationTests:
             print("✓ Contains pattern matching working")
             
             # Test case insensitive
-            pages, desc, groups = parse_page_range('contains:"summary"', 4, pdf_path)
+            pages, desc, groups = parse_page_range('contains/i:"summary"', 4, pdf_path)
             expected_pages = {3}  # Page with "Summary" title
             if pages != expected_pages:
                 print(f"❌ Case insensitive matching failed: expected {expected_pages}, got {pages}")

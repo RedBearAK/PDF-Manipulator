@@ -23,7 +23,7 @@ from pathlib import Path
 from datetime import datetime
 
 # Add the project root to Python path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 try:
     from pdf_manipulator.core.page_range.page_range_parser import PageRangeParser, parse_page_range

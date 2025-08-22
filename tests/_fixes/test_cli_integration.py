@@ -26,7 +26,7 @@ from pathlib import Path
 from datetime import datetime
 
 # Add the project root to Python path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 try:
     # Import the CLI module and related components
@@ -507,7 +507,13 @@ class CLIIntegrationTest:
         print("🔍 Testing Invalid Arguments")
         
         try:
-            parser = argparse.ArgumentParser()
+            # Create a custom parser for testing that doesn't exit
+            class TestArgumentParser(argparse.ArgumentParser):
+                def error(self, message):
+                    # Instead of calling sys.exit(), raise an exception
+                    raise argparse.ArgumentError(None, message)
+            
+            parser = TestArgumentParser()
             parser.add_argument('--extract-pages', type=str)
             parser.add_argument('path', type=Path)
             
@@ -524,7 +530,7 @@ class CLIIntegrationTest:
                 try:
                     parsed_args = parser.parse_args(args)
                     print(f"? {description}: unexpectedly succeeded")
-                except SystemExit:
+                except (SystemExit, argparse.ArgumentError) as e:
                     print(f"✓ {description}: correctly rejected")
                     passed += 1
                 except Exception as e:

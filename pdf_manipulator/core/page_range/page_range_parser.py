@@ -371,13 +371,11 @@ class PageRangeParser:
         """
         Check if argument looks like pattern expression.
         
-        FIXED: No comma checking - that already happened at top level.
+        FIXED: Now handles case-insensitive patterns like the standalone function.
         """
-        # Simple pattern detection - no comma checking needed
-        return any([
-            arg.startswith(('contains:', 'regex:', 'line-starts:', 'type:', 'size:')),
-            ':' in arg and any(arg.lower().startswith(p + ':') for p in ['contains', 'regex', 'line-starts', 'type', 'size']),
-        ])
+        # Just use the standalone function - it handles everything correctly
+        from pdf_manipulator.core.page_range.patterns import looks_like_pattern
+        return looks_like_pattern(arg)
     
     def _looks_like_range_pattern_no_comma_check(self, arg: str) -> bool:
         """
