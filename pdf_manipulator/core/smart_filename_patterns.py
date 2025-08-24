@@ -20,12 +20,13 @@ multiple_underscores_rgx = re.compile(r'_+')
 
 # Timestamp removal patterns
 datetime_timestamp_rgx = re.compile(r'^\d{8}_?\d{6}_?')
+datetime_date_only_rgx = re.compile(r'^\d{8}_?')
 unix_timestamp_rgx = re.compile(r'^\d{10}_?')
 
 # Existing extraction pattern removal
-pages_extraction_rgx = re.compile(r'_pages[^_]*$')
-extracted_extraction_rgx = re.compile(r'_extracted[^_]*$') 
-groups_extraction_rgx = re.compile(r'_groups[^_]*$')
+pages_extraction_rgx = re.compile(r'_pages.*$')
+extracted_extraction_rgx = re.compile(r'_extracted.*$') 
+groups_extraction_rgx = re.compile(r'_groups.*$')
 
 
 # End of file #

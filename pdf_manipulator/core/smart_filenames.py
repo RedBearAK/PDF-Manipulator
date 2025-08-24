@@ -15,6 +15,7 @@ from pdf_manipulator.core.smart_filename_patterns import (
     whitespace_to_underscore_rgx,
     multiple_underscores_rgx,
     datetime_timestamp_rgx,
+    datetime_date_only_rgx,
     unix_timestamp_rgx,
     pages_extraction_rgx,
     extracted_extraction_rgx,
@@ -238,8 +239,9 @@ def generate_extraction_filename(pdf_path: Path,
 def _clean_existing_filename(filename_stem: str) -> str:
     """Clean up problematic patterns in existing filenames."""
     # Remove existing timestamps
-    stem = datetime_timestamp_rgx.sub('', filename_stem)
-    stem = unix_timestamp_rgx.sub('', stem)
+    stem = unix_timestamp_rgx.sub('', filename_stem)
+    stem = datetime_timestamp_rgx.sub('', stem) # With or without "_" between
+    stem = datetime_date_only_rgx.sub('', stem) # Handle date-only timestamps
     
     # Remove existing extraction patterns
     stem = pages_extraction_rgx.sub('', stem)
