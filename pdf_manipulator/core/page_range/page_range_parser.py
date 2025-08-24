@@ -90,12 +90,12 @@ class PageRangeParser:
         # File selector expansion (if available and needed)
         if self.file_selector and 'file:' in range_str:
             try:
-                original_range_str = range_str
+                # original_range_str = range_str
                 range_str = self.file_selector.expand_file_selectors(range_str)
                 
-                # Show expansion if files were processed
-                if range_str != original_range_str:
-                    console.print(f"[dim]Expanded file selectors: '{original_range_str}' → '{range_str}'[/dim]")
+                # # Show expansion if files were processed
+                # if range_str != original_range_str:
+                #     console.print(f"[dim]Expanded file selectors: '{original_range_str}' → '{range_str}'[/dim]")
                     
             except ValueError as e:
                 raise ValueError(f"File selector error: {e}")
