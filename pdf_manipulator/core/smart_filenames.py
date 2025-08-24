@@ -8,6 +8,19 @@ from pathlib import Path
 from typing import Any
 from datetime import datetime
 
+from pdf_manipulator.core.smart_filename_patterns import (
+    simple_numeric_range_rgx,
+    extended_numeric_range_rgx,
+    problematic_filename_chars_rgx,
+    whitespace_to_underscore_rgx,
+    multiple_underscores_rgx,
+    datetime_timestamp_rgx,
+    unix_timestamp_rgx,
+    pages_extraction_rgx,
+    extracted_extraction_rgx,
+    groups_extraction_rgx
+)
+
 
 def generate_smart_description(arguments: list, total_pages: int, max_length: int = 50) -> str:
     """
@@ -43,7 +56,7 @@ def _describe_single_argument(argument: str) -> str:
     arg = argument.strip()
     
     # Simple numeric ranges
-    if re.match(r'^\d+(-\d+)?$', arg):
+    if simple_numeric_range_rgx.match(arg):
         return f"pages{arg}"
     
     # Contains patterns
@@ -101,7 +114,7 @@ def _categorize_arguments(arguments: list, total_pages: int) -> str:
             categories['patterns'] += 1
         elif '&' in arg or '|' in arg:
             categories['booleans'] += 1
-        elif re.match(r'^\d+(-\d+|:\d+|..\d+)?$', arg):
+        elif extended_numeric_range_rgx.match(arg):
             categories['ranges'] += 1
         elif arg.startswith('file:'):
             categories['files'] += 1
@@ -138,13 +151,13 @@ def _categorize_arguments(arguments: list, total_pages: int) -> str:
 def _sanitize_for_filename(text: str) -> str:
     """Sanitize text for use in filenames."""
     # Remove problematic characters
-    sanitized = re.sub(r'[<>:"/\\|?*]', '_', text)
+    sanitized = problematic_filename_chars_rgx.sub('_', text)
     
     # Replace spaces with underscores
-    sanitized = re.sub(r'\s+', '_', sanitized)
+    sanitized = whitespace_to_underscore_rgx.sub('_', sanitized)
     
     # Remove multiple consecutive underscores
-    sanitized = re.sub(r'_+', '_', sanitized)
+    sanitized = multiple_underscores_rgx.sub('_', sanitized)
     
     # Remove leading/trailing underscores
     sanitized = sanitized.strip('_')
@@ -225,16 +238,13 @@ def generate_extraction_filename(pdf_path: Path,
 def _clean_existing_filename(filename_stem: str) -> str:
     """Clean up problematic patterns in existing filenames."""
     # Remove existing timestamps
-    stem = re.sub(r'^\d{8}_?\d{6}_?', '', filename_stem)
-    stem = re.sub(r'^\d{10}_?', '', stem)  # Unix timestamps
+    stem = datetime_timestamp_rgx.sub('', filename_stem)
+    stem = unix_timestamp_rgx.sub('', stem)
     
     # Remove existing extraction patterns
-    stem = re.sub(r'_pages[^_]*$', '', stem)
-    stem = re.sub(r'_extracted[^_]*$', '', stem)
-    stem = re.sub(r'_groups[^_]*$', '', stem)
-    
-    # Clean up OCR artifacts
-    stem = re.sub(r'_OCRd?$', '', stem, flags=re.IGNORECASE)
+    stem = pages_extraction_rgx.sub('', stem)
+    stem = extracted_extraction_rgx.sub('', stem)
+    stem = groups_extraction_rgx.sub('', stem)
     
     # Remove trailing separators
     stem = stem.strip('_-')
