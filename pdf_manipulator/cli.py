@@ -392,8 +392,6 @@ def main():
     preview = parser.add_argument_group('preview and conflict resolution')
     preview.add_argument('--preview', action='store_true',
         help='Show file operation preview (what files created/overwritten) before executing')
-    # preview.add_argument('--conflicts', choices=['ask', 'overwrite', 'skip', 'rename', 'fail'],
-    #     default='ask', help='How to handle existing output files (default: ask)')
 
     # Safety options
     safety = parser.add_argument_group('safety options')
@@ -412,11 +410,6 @@ def main():
             console.print("[red]Error: Cannot use both --strip-first and --extract-pages[/red]")
             sys.exit(1)
         args.extract_pages = "1"
-
-    # Validate arguments
-    if args.batch and args.interactive:
-        console.print("[red]Error: Cannot use both --batch and --interactive[/red]")
-        sys.exit(1)
 
     # Validate --separate-files usage
     if (args.separate_files or args.respect_groups) and not args.extract_pages:
@@ -536,6 +529,20 @@ def main():
         handle_folder_operations(args, pdf_files)
 
 
+def is_interactive_mode(args) -> bool:
+    """Determine if we're in interactive mode (default unless --batch specified)."""
+    return not getattr(args, 'batch', False)
+
+
+def get_conflict_strategy(args) -> str:
+    """Get conflict resolution strategy, adjusting for batch mode."""
+    strategy = getattr(args, 'conflicts', 'ask')
+    # In batch mode, convert 'ask' to 'rename' since we can't prompt
+    if getattr(args, 'batch', False) and strategy == 'ask':
+        return 'rename'
+    return strategy
+
+
 def handle_ghostscript_operations(args: argparse.Namespace, is_file: bool, is_folder: bool):
     """Handle Ghostscript-specific operations."""
     try:
@@ -646,25 +653,21 @@ def extract_enhanced_args(args) -> dict:
     # Extract conflict resolution strategy  
     conflict_strategy = getattr(args, 'conflicts', 'ask')
     
-    # Extract naming options
-    naming_options = {
+    # FLATTENED STRUCTURE - no nested dictionaries
+    return {
+        # Core behavior flags
+        'interactive': not getattr(args, 'batch', False),
+        'preview': getattr(args, 'preview', False),
+        
+        # Strategy settings
+        'dedup_strategy': dedup_strategy,
+        'conflict_strategy': conflict_strategy,
+        
+        # Naming options (flattened)
         'smart_names': getattr(args, 'smart_names', False),
         'name_prefix': getattr(args, 'name_prefix', None),
         'no_timestamp': getattr(args, 'no_timestamp', False),
         'template': getattr(args, 'filename_template', None)
-    }
-    
-    # Extract interactive options
-    interactive_options = {
-        'interactive': getattr(args, 'interactive', False),
-        'preview': getattr(args, 'preview', False)
-    }
-    
-    return {
-        'dedup_strategy': dedup_strategy,
-        'conflict_strategy': conflict_strategy,
-        'naming': naming_options,
-        'interactive': interactive_options
     }
 
 
@@ -711,9 +714,9 @@ def process_extraction_with_enhancements(args, pdf_path: Path, total_pages: int)
         duplicate_info = detect_duplicates(groups)
         
         # Interactive confirmation if requested
-        if enhanced_args['interactive']['interactive']:
+        if enhanced_args['interactive']:
             if duplicate_info['has_duplicates']:
-                from pdf_manipulator.ui import confirm_deduplication_strategy
+                from pdf_manipulator.ui_enhanced import confirm_deduplication_strategy
                 enhanced_args['dedup_strategy'] = confirm_deduplication_strategy(
                     duplicate_info, 
                     'grouped' if args.respect_groups else 'single',
@@ -721,7 +724,7 @@ def process_extraction_with_enhancements(args, pdf_path: Path, total_pages: int)
                 )
         
         # Generate smart description if enabled
-        if enhanced_args['naming']['smart_names']:
+        if enhanced_args['smart_names']:
             page_args = [args.extract_pages] if hasattr(args, 'extract_pages') else []
             smart_desc = generate_smart_description(page_args, len(pages_to_extract))
             desc = smart_desc
@@ -731,7 +734,7 @@ def process_extraction_with_enhancements(args, pdf_path: Path, total_pages: int)
             extraction_mode = 'grouped'
         elif args.separate_files:
             extraction_mode = 'separate'
-        elif enhanced_args['interactive']['interactive']:
+        elif enhanced_args['interactive']:
             extraction_mode = decide_extraction_mode(pages_to_extract, groups, True)
         else:
             extraction_mode = 'single'
@@ -745,11 +748,11 @@ def process_extraction_with_enhancements(args, pdf_path: Path, total_pages: int)
         resolved_paths, skipped_paths = resolve_file_conflicts(
             planned_paths, 
             enhanced_args['conflict_strategy'],
-            enhanced_args['interactive']['interactive']
+            enhanced_args['interactive']
         )
         
         # Show preview if requested
-        if enhanced_args['interactive']['preview']:
+        if enhanced_args['preview']:
             preview_file_operations(planned_paths, resolved_paths, skipped_paths)
             from rich.prompt import Confirm
             if not Confirm.ask("Proceed with extraction?", default=True):
