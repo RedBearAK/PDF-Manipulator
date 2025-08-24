@@ -409,23 +409,302 @@ def extract_pages_grouped(pdf_path: Path, page_range: str, patterns: list[str] =
         return []
 
 
-# Keep existing functions for backward compatibility
+def extract_pages_separate(pdf_path: Path, page_range: str, patterns: list[str] = None,
+                            template: str = None, source_page: int = 1,
+                            dry_run: bool = False, dedup_strategy: str = 'strict'
+                            ) -> list[tuple[Path, float]]:
+    """
+    Extract specified pages as separate documents (one file per page).
+    
+    This function creates individual single-page groups and uses the grouped extraction
+    logic to generate separate files for each page. Each page becomes its own PDF file.
+    
+    Args:
+        pdf_path: Source PDF file
+        page_range: Pages to extract with pattern and range syntax
+        patterns: List of enhanced pattern strings for content extraction
+        template: Filename template for smart naming
+        source_page: Fallback page for pattern extraction
+        dry_run: Whether to perform actual extraction
+        dedup_strategy: Deduplication strategy ('strict' by default for separate files)
+        
+    Returns:
+        List of (output_path, file_size) tuples for each separate page file
+    """
+    try:
+        with suppress_pdf_warnings():
+            reader = PdfReader(pdf_path)
+            total_pages = len(reader.pages)
+        
+        # Parse page range to get the pages that should be extracted
+        pages_to_extract, range_desc, groups = parse_page_range(page_range, total_pages, pdf_path)
+        
+        if not pages_to_extract:
+            raise ValueError(f"No valid pages found for range: {page_range}")
+        
+        # Convert all pages to individual single-page groups
+        # This ensures each page becomes its own separate file
+        from pdf_manipulator.core.page_range.page_group import PageGroup
+        
+        # Get the ordered list of pages, respecting any deduplication strategy
+        ordered_pages = get_ordered_pages_from_groups(groups, pages_to_extract, dedup_strategy)
+        
+        # Create individual groups for separate file extraction
+        individual_groups = []
+        for page_num in ordered_pages:
+            # Each page gets its own group for separate file creation
+            page_group = PageGroup([page_num], False, f"page{page_num}")
+            individual_groups.append(page_group)
+        
+        # Apply deduplication strategy to individual groups (should be minimal for separate files)
+        from pdf_manipulator.core.deduplication import apply_deduplication_strategy
+        processed_groups, dedup_info = apply_deduplication_strategy(individual_groups, dedup_strategy)
+        
+        output_files = []
+        
+        if dry_run:
+            console.print(f"\n[cyan]DRY RUN: Would create {len(processed_groups)} separate files[/cyan]")
+        
+        # Extract each page as a separate file
+        for group_idx, group in enumerate(processed_groups):
+            # Skip empty groups (shouldn't happen with individual pages, but safety check)
+            if not group.pages:
+                console.print(f"[dim]Skipping empty group {group_idx+1} (no pages)[/dim]")
+                continue
+            
+            # For separate files, each group should have exactly one page
+            if len(group.pages) != 1:
+                console.print(f"[yellow]Warning: Expected single page in group {group_idx+1}, got {len(group.pages)} pages[/yellow]")
+            
+            page_num = group.pages[0]  # Should be exactly one page
+            
+            # Generate output filename for separate page
+            output_path = pdf_path.parent / f"{pdf_path.stem}_page{page_num:02d}.pdf"
+            
+            if dry_run:
+                console.print(f"[cyan]Page {page_num} would create:[/cyan] {output_path.name}")
+                continue
+            
+            # Create single-page PDF
+            writer = PdfWriter()
+            if 1 <= page_num <= total_pages:
+                writer.add_page(reader.pages[page_num - 1])  # Convert to 0-indexed
+            
+            # Write output file
+            with open(output_path, 'wb') as output_file:
+                writer.write(output_file)
+            
+            file_size = output_path.stat().st_size / 1024 / 1024  # MB
+            output_files.append((output_path, file_size))
+            
+            console.print(f"[green]✓ Extracted page {page_num}:[/green] {output_path.name} ({file_size:.2f} MB)")
+        
+        if not dry_run and output_files:
+            console.print(f"[green]✓ Created {len(output_files)} separate files[/green]")
+        
+        return output_files
+
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        return []
+    except Exception as e:
+        console.print(f"[red]Error extracting separate pages from {pdf_path.name}: {e}[/red]")
+        return []
+
+
+# Replace the stub functions in operations.py with these real implementations:
+
 def analyze_pdf(pdf_path: Path) -> dict:
-    """Analyze PDF structure and properties."""
-    # Implementation unchanged - just keep existing function
-    pass
+    """
+    Analyze PDF structure and properties.
+    
+    Called by folder_operations.py for --analyze mode on files > 1MB or > 0.5MB per page.
+    
+    Returns:
+        Dictionary with analysis results including page_count, file_size_mb, content info
+    """
+    try:
+        with suppress_pdf_warnings():
+            reader = PdfReader(pdf_path)
+            
+        # Basic analysis
+        page_count = len(reader.pages)
+        file_size = pdf_path.stat().st_size / 1024 / 1024  # MB
+        size_per_page = file_size / page_count if page_count > 0 else 0
+        
+        analysis = {
+            'file_path': pdf_path,
+            'page_count': page_count,
+            'file_size_mb': file_size,
+            'size_per_page_mb': size_per_page,
+            'has_images': False,
+            'has_text': False,
+            'is_malformed': False
+        }
+        
+        # Sample a few pages to check content type
+        pages_to_check = min(3, page_count)
+        for i in range(pages_to_check):
+            try:
+                page = reader.pages[i]
+                
+                # Check for text content
+                text_content = page.extract_text().strip()
+                if text_content:
+                    analysis['has_text'] = True
+                
+                # Check for images (basic detection via XObject resources)
+                if '/Resources' in page and '/XObject' in page['/Resources']:
+                    x_objects = page['/Resources']['/XObject']
+                    for obj in x_objects.values():
+                        if obj.get('/Subtype') == '/Image':
+                            analysis['has_images'] = True
+                            break
+                            
+            except Exception:
+                # If we can't read a page, mark as potentially malformed
+                analysis['is_malformed'] = True
+        
+        # Display analysis results
+        console.print(f"\n[cyan]📊 Analysis: {pdf_path.name}[/cyan]")
+        console.print(f"  📄 Pages: {page_count}")
+        console.print(f"  📏 Size: {file_size:.2f} MB ({size_per_page:.2f} MB/page)")
+        
+        content_types = []
+        if analysis['has_text']:
+            content_types.append("Text")
+        if analysis['has_images']: 
+            content_types.append("Images")
+        content_str = ", ".join(content_types) if content_types else "Unknown content"
+        console.print(f"  📝 Content: {content_str}")
+        
+        if analysis['is_malformed']:
+            console.print(f"  [yellow]⚠️  Potential issues detected[/yellow]")
+        
+        return analysis
+        
+    except Exception as e:
+        console.print(f"[red]Error analyzing {pdf_path.name}: {e}[/red]")
+        return {
+            'file_path': pdf_path,
+            'error': str(e),
+            'page_count': 0,
+            'file_size_mb': 0,
+            'has_images': False,
+            'has_text': False,
+            'is_malformed': True
+        }
 
 
 def optimize_pdf(pdf_path: Path, quality: str = "default") -> tuple[Path, float]:
-    """Optimize PDF file size."""
-    # Implementation unchanged - just keep existing function  
-    pass
+    """
+    Optimize PDF file size using PyPDF compression.
+    
+    Called by folder_operations.py for --optimize mode.
+    
+    Args:
+        pdf_path: PDF file to optimize
+        quality: Optimization level ("default" or "aggressive")
+        
+    Returns:
+        Tuple of (output_path, optimized_size_mb)
+    """
+    try:
+        # Create optimized version filename
+        output_path = pdf_path.parent / f"{pdf_path.stem}_optimized.pdf"
+        
+        with suppress_pdf_warnings():
+            reader = PdfReader(pdf_path)
+            writer = PdfWriter()
+            
+            # Add all pages to writer
+            for page in reader.pages:
+                writer.add_page(page)
+            
+            # Apply optimization based on quality setting
+            if quality == "aggressive":
+                # More aggressive compression - remove duplicates and compress streams
+                writer.compress_identical_objects(remove_duplicates=True)
+                for page in writer.pages:
+                    page.compress_content_streams()
+            else:
+                # Default optimization - just compress identical objects
+                writer.compress_identical_objects()
+        
+        # Write optimized file
+        with open(output_path, 'wb') as output_file:
+            writer.write(output_file)
+        
+        # Calculate new size
+        new_size = output_path.stat().st_size / 1024 / 1024  # MB
+        
+        return output_path, new_size
+        
+    except Exception as e:
+        console.print(f"[red]Error optimizing {pdf_path.name}: {e}[/red]")
+        # Return original path and size if optimization fails
+        original_size = pdf_path.stat().st_size / 1024 / 1024
+        return pdf_path, original_size
 
 
 def split_to_pages(pdf_path: Path, dry_run: bool = False) -> list[tuple[Path, float]]:
-    """Split PDF into individual pages."""
-    # Implementation unchanged - just keep existing function
-    pass
+    """
+    Split PDF into individual page files.
+    
+    Called by processor.py for --split-pages mode on single files.
+    
+    Args:
+        pdf_path: PDF file to split
+        dry_run: If True, show what would be done without creating files
+        
+    Returns:
+        List of (output_path, file_size_mb) tuples for each created page file
+    """
+    try:
+        with suppress_pdf_warnings():
+            reader = PdfReader(pdf_path)
+            total_pages = len(reader.pages)
+        
+        if total_pages <= 1:
+            console.print("[yellow]PDF has only one page - nothing to split[/yellow]")
+            return []
+        
+        output_files = []
+        
+        if dry_run:
+            console.print(f"[cyan]DRY RUN: Would split {pdf_path.name} into {total_pages} files[/cyan]")
+            for page_num in range(1, total_pages + 1):
+                output_path = pdf_path.parent / f"{pdf_path.stem}_page{page_num:02d}.pdf"
+                console.print(f"[cyan]  Would create:[/cyan] {output_path.name}")
+            return []
+        
+        # Actually split the pages
+        console.print(f"[blue]Splitting {pdf_path.name} into {total_pages} pages...[/blue]")
+        
+        for page_num in range(1, total_pages + 1):
+            # Create output path for this page
+            output_path = pdf_path.parent / f"{pdf_path.stem}_page{page_num:02d}.pdf"
+            
+            # Create single-page PDF
+            writer = PdfWriter()
+            writer.add_page(reader.pages[page_num - 1])  # Convert to 0-indexed
+            
+            # Write output file
+            with open(output_path, 'wb') as output_file:
+                writer.write(output_file)
+            
+            file_size = output_path.stat().st_size / 1024 / 1024  # MB
+            output_files.append((output_path, file_size))
+            
+            # Show progress for each page
+            console.print(f"[green]  ✓ Created page {page_num}:[/green] {output_path.name} ({file_size:.2f} MB)")
+        
+        console.print(f"[green]✓ Split complete: {len(output_files)} files created[/green]")
+        return output_files
+        
+    except Exception as e:
+        console.print(f"[red]Error splitting {pdf_path.name}: {e}[/red]")
+        return []
 
 
 # End of file #

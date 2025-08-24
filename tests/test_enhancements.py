@@ -92,53 +92,100 @@ def test_empty_groups_handling():
 
 
 def test_deduplication_strategies():
-    """Test deduplication strategy logic."""
+    """Test deduplication strategy logic with real module - no fallback."""
     print("Testing deduplication strategies...")
     
     try:
-        # Import deduplication module (mock if needed)
-        try:
-            from pdf_manipulator.core.deduplication import detect_duplicates, apply_deduplication_strategy
-            imports_available = True
-        except ImportError:
-            imports_available = False
+        # Import deduplication module - should work now, fail hard if it doesn't
+        from pdf_manipulator.core.deduplication import detect_duplicates, apply_deduplication_strategy
+        print("  ✓ Deduplication module imported successfully")
         
-        if not imports_available:
-            print("  ⚠️  Deduplication module not available - testing logic only")
-        
-        # Test duplicate detection logic
+        # Test with real PageGroup objects
         groups_with_duplicates = [
             PageGroup([1, 2, 3], False, "group1"),
             PageGroup([2, 4, 5], False, "group2"),  # Page 2 is duplicate
             PageGroup([5, 6], False, "group3")      # Page 5 is duplicate
         ]
         
-        # Manual duplicate detection for testing
-        all_pages = []
-        for group in groups_with_duplicates:
-            all_pages.extend(group.pages)
+        # Test real duplicate detection function
+        duplicate_info = detect_duplicates(groups_with_duplicates)
         
-        unique_pages = set(all_pages)
-        duplicates_found = len(all_pages) != len(unique_pages)
-        
-        if duplicates_found:
-            print("  ✓ Duplicate detection works")
-            test_results.append(("Duplicate detection", True, ""))
+        if duplicate_info['has_duplicates']:
+            expected_duplicates = {2, 5}
+            actual_duplicates = set(duplicate_info['duplicate_pages'])
+            
+            if actual_duplicates == expected_duplicates:
+                print(f"  ✓ Real duplicate detection works - found pages {duplicate_info['duplicate_pages']}")
+                test_results.append(("Real duplicate detection", True, ""))
+            else:
+                print(f"  ✗ Expected duplicates {expected_duplicates}, got {actual_duplicates}")
+                test_results.append(("Real duplicate detection", False, f"Wrong duplicates: {actual_duplicates}"))
+                return False
         else:
-            print("  ✗ Failed to detect duplicates")
-            test_results.append(("Duplicate detection", False, "No duplicates found"))
+            print("  ✗ Real duplicate detection failed - no duplicates found")
+            test_results.append(("Real duplicate detection", False, "No duplicates detected"))
+            return False
         
-        # Test deduplication strategies
-        strategies = ['strict', 'groups', 'none', 'warn']
-        for strategy in strategies:
-            print(f"  ✓ Strategy '{strategy}' defined")
+        # Test actual deduplication strategies with real function
+        strategies_to_test = ['strict', 'groups', 'none', 'warn']
         
-        test_results.append(("Deduplication strategies", True, ""))
+        for strategy in strategies_to_test:
+            try:
+                if strategy == 'warn':
+                    # Warn strategy should show warning but proceed
+                    print(f"    Testing strategy '{strategy}' (expect warning output)...")
+                
+                processed_groups, dedup_info = apply_deduplication_strategy(
+                    groups_with_duplicates.copy(), strategy
+                )
+                print(f"  ✓ Strategy '{strategy}' executed successfully")
+                
+                # Verify strict deduplication actually removes duplicates
+                if strategy == 'strict':
+                    all_pages = []
+                    for group in processed_groups:
+                        if hasattr(group, 'pages') and group.pages:
+                            all_pages.extend(group.pages)
+                    
+                    unique_pages = set(all_pages)
+                    if len(all_pages) == len(unique_pages):
+                        print(f"    ✓ Strict deduplication correctly removed all duplicates")
+                    else:
+                        print(f"    ✗ Strict deduplication failed - still has duplicates: {all_pages}")
+                        test_results.append((f"Strategy {strategy} deduplication", False, "Still has duplicates"))
+                        return False
+                
+                # Verify none strategy keeps all duplicates
+                elif strategy == 'none':
+                    all_pages = []
+                    for group in processed_groups:
+                        if hasattr(group, 'pages') and group.pages:
+                            all_pages.extend(group.pages)
+                    
+                    # Should still have duplicates
+                    if len(all_pages) > len(set(all_pages)):
+                        print(f"    ✓ 'none' strategy correctly preserved duplicates")
+                    else:
+                        print(f"    ✗ 'none' strategy unexpectedly removed duplicates")
+                        test_results.append((f"Strategy {strategy} preservation", False, "Removed duplicates"))
+                        return False
+                        
+            except Exception as e:
+                print(f"  ✗ Strategy '{strategy}' failed with exception: {e}")
+                test_results.append((f"Strategy {strategy} execution", False, str(e)))
+                return False
+        
+        test_results.append(("Real deduplication strategies", True, ""))
         return True
         
+    except ImportError as e:
+        print(f"  ✗ CRITICAL: Deduplication module import failed: {e}")
+        print("     This indicates a real problem with the module structure!")
+        test_results.append(("Deduplication module import", False, str(e)))
+        return False
     except Exception as e:
-        print(f"  ✗ Deduplication test failed: {e}")
-        test_results.append(("Deduplication strategies", False, str(e)))
+        print(f"  ✗ Deduplication test failed with exception: {e}")
+        test_results.append(("Real deduplication strategies", False, str(e)))
         return False
 
 

@@ -379,8 +379,8 @@ def main():
 
     # Processing modes
     modes = parser.add_argument_group('processing modes')
-    modes.add_argument('--interactive', action='store_true',
-        help='Process PDFs interactively (default for operations)')
+    # modes.add_argument('--interactive', action='store_true',
+    #     help='Process PDFs interactively (default for operations)')
     modes.add_argument('--batch', action='store_true',
         help='Process all matching PDFs without individual prompts')
     modes.add_argument('--recursive', action='store_true',
@@ -388,12 +388,12 @@ def main():
     modes.add_argument('--dry-run', action='store_true',
         help='Show what would be done without actually doing it')
 
-    # Interactive mode enhancements
-    interactive = parser.add_argument_group('interactive options')
-    interactive.add_argument('--interactive', action='store_true', default=False,
-        help='Enable interactive prompts for complex operations')
-    interactive.add_argument('--preview', action='store_true',
-        help='Show preview of operations before executing')
+    # File operation (output) previewing, conflict resolution
+    preview = parser.add_argument_group('preview and conflict resolution')
+    preview.add_argument('--preview', action='store_true',
+        help='Show file operation preview (what files created/overwritten) before executing')
+    # preview.add_argument('--conflicts', choices=['ask', 'overwrite', 'skip', 'rename', 'fail'],
+    #     default='ask', help='How to handle existing output files (default: ask)')
 
     # Safety options
     safety = parser.add_argument_group('safety options')
@@ -841,7 +841,7 @@ def perform_extraction(pdf_path: Path, args, mode: str, output_paths: list[Path]
                 
         elif mode == 'separate':
             output_files = extract_pages_separate(
-                pdf_path, args.extract_pages, patterns, template, source_page, dry_run
+                pdf_path, args.extract_pages, patterns, template, source_page, dry_run, dedup_strategy
                 # Note: extract_pages_separate needs dedup_strategy parameter added
             )
             if output_files:
