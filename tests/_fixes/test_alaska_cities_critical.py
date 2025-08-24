@@ -22,6 +22,7 @@ from datetime import datetime
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 try:
+    from pdf_manipulator.core.operations import get_ordered_pages_from_groups
     from pdf_manipulator.core.page_range.page_range_parser import parse_page_range
     from reportlab.lib.pagesizes import letter
     from reportlab.platypus import SimpleDocTemplate, Paragraph, PageBreak
@@ -288,7 +289,6 @@ def test_exact_page_extraction_and_order():
         
         # Check if we can reconstruct order from groups
         try:
-            from pdf_manipulator.core.page_range.page_range_parser import get_ordered_pages_from_groups
             ordered_pages = get_ordered_pages_from_groups(groups, pages)
             print(f"📑 Order preserved: {len(ordered_pages)} pages in sequence")
             

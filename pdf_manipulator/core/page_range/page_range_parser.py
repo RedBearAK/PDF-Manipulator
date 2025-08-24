@@ -482,28 +482,4 @@ def parse_page_range(range_str: str, total_pages: int, pdf_path: Path = None) ->
     return parser.parse(range_str)
 
 
-def get_ordered_pages_from_groups(groups: list[PageGroup], fallback_pages: set[int] = None) -> list[int]:
-    """
-    Extract ordered pages from page groups, respecting order preservation flags.
-    
-    This function is used by other modules to get the final page order.
-    """
-    if not groups:
-        return sorted(list(fallback_pages)) if fallback_pages else []
-    
-    ordered_pages = []
-    for group in groups:
-        # For ranges or preserve_order groups, maintain exact order
-        # For other groups, sort for backward compatibility
-        if (hasattr(group, 'is_range') and getattr(group, 'is_range', False)) or \
-           (hasattr(group, 'preserve_order') and getattr(group, 'preserve_order', False)):
-            # Preserve the exact order from this group
-            ordered_pages.extend(group.pages)
-        else:
-            # Use sorted order for this group (backward compatibility)
-            ordered_pages.extend(sorted(group.pages))
-    
-    return ordered_pages
-
-
 # End of file #

@@ -318,9 +318,6 @@ def main():
 
     # Pattern extraction (NEW)
     patterns = parser.add_argument_group('pattern extraction')
-    # patterns.add_argument('--scrape-pattern', action='append', metavar='PATTERN',
-    #     help=('Content extraction pattern with compact syntax: "[var=]keyword:movements+type+count[-]" '
-    #           '(can be used multiple times). Examples: "Invoice Number:r1wd1", "company=Company:u1ln1"'))
     patterns.add_argument('--scrape-pattern', action='append', metavar='PATTERN',
         help=('Content extraction pattern with enhanced Phase 3 syntax: '
             '"[var=]keyword:movements+type+count[-][pg<pages>][mt<matches>]" '
@@ -328,20 +325,23 @@ def main():
             '"company=Company:u1ln1pg2", "total=Total:r1nb1mt2"'))
     patterns.add_argument('--scrape-patterns-file', metavar='FILE',
         help='File containing extraction patterns, one per line')
-    # patterns.add_argument('--pattern-source-page', type=int, default=1, metavar='N',
-    #     help='Page number to extract patterns from (default: 1)')
     patterns.add_argument('--pattern-source-page', type=int, default=1, metavar='N',
         help='Page number to extract patterns from (default: 1, overridden by pg specs)')
 
-    # Template-based naming (NEW)
+    # NEW: Smart filename options
     naming = parser.add_argument_group('intelligent naming')
-    # naming.add_argument('--filename-template', metavar='TEMPLATE',
-    #     help=('Template for naming files: "{variable|fallback}_pages{range}.pdf". '
-    #           'Built-in variables: {range}, {original_name}, {page_count}'))
     naming.add_argument('--filename-template', metavar='TEMPLATE',
         help=('Template for naming files: "{variable|fallback}_pages{range}.pdf". '
             'Built-in variables: {range}, {original_name}, {page_count}. '
             'Works with Phase 3 enhanced pattern extraction.'))
+
+    # NEW: Enhanced naming options
+    naming.add_argument('--smart-names', action='store_true',
+        help='Use smart filename generation to avoid unwieldy names for complex extractions')
+    naming.add_argument('--name-prefix', metavar='PREFIX',
+        help='Custom prefix for output filenames (instead of timestamp)')
+    naming.add_argument('--no-timestamp', action='store_true',
+        help='Disable timestamp prefixes in generated filenames')
 
     # Extraction options
     extraction = parser.add_argument_group('extraction options')
@@ -349,6 +349,17 @@ def main():
         help='Extract pages as separate documents (one file per page). Default: single document')
     extraction.add_argument('--respect-groups', action='store_true',
         help='Respect comma-separated groupings: ranges→multi-page files, individuals→single files')
+    extraction.add_argument('--dedup', 
+        choices=['none', 'strict', 'groups', 'warn', 'fail'], 
+        metavar='STRATEGY',
+        help=('Deduplication strategy: none (disable), strict (no dupes in entire set), '
+            'groups (dedupe within groups), warn (show warning), fail (error on dupes)'))
+    extraction.add_argument('--conflicts', 
+        choices=['ask', 'overwrite', 'skip', 'rename', 'fail'],
+        default='ask',
+        metavar='STRATEGY', 
+        help=('File conflict resolution: ask (interactive), overwrite (replace existing), '
+            'skip (keep existing), rename (add suffix), fail (stop on conflict)'))
 
     # Group filtering and boundary options
     filtering = parser.add_argument_group('group filtering and boundaries')
@@ -376,6 +387,13 @@ def main():
         help='Process subdirectories recursively (for --gs-batch-fix)')
     modes.add_argument('--dry-run', action='store_true',
         help='Show what would be done without actually doing it')
+
+    # Interactive mode enhancements
+    interactive = parser.add_argument_group('interactive options')
+    interactive.add_argument('--interactive', action='store_true', default=False,
+        help='Enable interactive prompts for complex operations')
+    interactive.add_argument('--preview', action='store_true',
+        help='Show preview of operations before executing')
 
     # Safety options
     safety = parser.add_argument_group('safety options')
@@ -610,6 +628,239 @@ def handle_scraper_operations(args: argparse.Namespace, is_file: bool, is_folder
     console.print("[dim]This will integrate the existing scraper CLI functionality[/dim]")
     # TODO: Implement in Phase 2
     sys.exit(0)
+
+
+def extract_enhanced_args(args) -> dict:
+    """
+    Extract enhanced arguments for PDF operations.
+    
+    Args:
+        args: Parsed command line arguments
+        
+    Returns:
+        Dictionary with processed enhanced arguments
+    """
+    # Determine deduplication strategy
+    dedup_strategy = determine_default_dedup_strategy(args)
+    
+    # Extract conflict resolution strategy  
+    conflict_strategy = getattr(args, 'conflicts', 'ask')
+    
+    # Extract naming options
+    naming_options = {
+        'smart_names': getattr(args, 'smart_names', False),
+        'name_prefix': getattr(args, 'name_prefix', None),
+        'no_timestamp': getattr(args, 'no_timestamp', False),
+        'template': getattr(args, 'filename_template', None)
+    }
+    
+    # Extract interactive options
+    interactive_options = {
+        'interactive': getattr(args, 'interactive', False),
+        'preview': getattr(args, 'preview', False)
+    }
+    
+    return {
+        'dedup_strategy': dedup_strategy,
+        'conflict_strategy': conflict_strategy,
+        'naming': naming_options,
+        'interactive': interactive_options
+    }
+
+
+def determine_default_dedup_strategy(args) -> str:
+    """
+    Determine the default deduplication strategy based on output mode.
+    """
+    if hasattr(args, 'dedup') and args.dedup:
+        return args.dedup
+    elif hasattr(args, 'respect_groups') and args.respect_groups:
+        return 'groups'  # Allow dupes between groups
+    elif hasattr(args, 'separate_files') and args.separate_files:
+        return 'strict'  # No duplicate page files
+    else:
+        return 'strict'  # Single file - no duplicate pages
+
+
+def process_extraction_with_enhancements(args, pdf_path: Path, total_pages: int) -> bool:
+    """
+    Process extraction with all enhancements applied.
+    
+    Args:
+        args: Parsed command line arguments
+        pdf_path: PDF file to process
+        total_pages: Number of pages in PDF
+        
+    Returns:
+        True if extraction succeeded, False otherwise
+    """
+    from pdf_manipulator.core.parser import parse_page_range_from_args
+    from pdf_manipulator.core.deduplication import detect_duplicates
+    from pdf_manipulator.core.file_conflicts import resolve_file_conflicts, preview_file_operations
+    from pdf_manipulator.core.smart_filenames import generate_smart_description
+    from pdf_manipulator.ui import decide_extraction_mode
+    
+    # Extract enhanced arguments
+    enhanced_args = extract_enhanced_args(args)
+    
+    try:
+        # Parse page range and detect issues
+        pages_to_extract, desc, groups = parse_page_range_from_args(args, total_pages, pdf_path)
+        
+        # Detect duplicates early
+        duplicate_info = detect_duplicates(groups)
+        
+        # Interactive confirmation if requested
+        if enhanced_args['interactive']['interactive']:
+            if duplicate_info['has_duplicates']:
+                from pdf_manipulator.ui import confirm_deduplication_strategy
+                enhanced_args['dedup_strategy'] = confirm_deduplication_strategy(
+                    duplicate_info, 
+                    'grouped' if args.respect_groups else 'single',
+                    enhanced_args['dedup_strategy']
+                )
+        
+        # Generate smart description if enabled
+        if enhanced_args['naming']['smart_names']:
+            page_args = [args.extract_pages] if hasattr(args, 'extract_pages') else []
+            smart_desc = generate_smart_description(page_args, len(pages_to_extract))
+            desc = smart_desc
+        
+        # Determine extraction mode
+        if args.respect_groups:
+            extraction_mode = 'grouped'
+        elif args.separate_files:
+            extraction_mode = 'separate'
+        elif enhanced_args['interactive']['interactive']:
+            extraction_mode = decide_extraction_mode(pages_to_extract, groups, True)
+        else:
+            extraction_mode = 'single'
+        
+        # Plan output files
+        planned_paths = plan_output_files(
+            pdf_path, desc, extraction_mode, groups, enhanced_args['naming']
+        )
+        
+        # Resolve file conflicts
+        resolved_paths, skipped_paths = resolve_file_conflicts(
+            planned_paths, 
+            enhanced_args['conflict_strategy'],
+            enhanced_args['interactive']['interactive']
+        )
+        
+        # Show preview if requested
+        if enhanced_args['interactive']['preview']:
+            preview_file_operations(planned_paths, resolved_paths, skipped_paths)
+            from rich.prompt import Confirm
+            if not Confirm.ask("Proceed with extraction?", default=True):
+                console.print("[yellow]Extraction cancelled by user[/yellow]")
+                return False
+        
+        # Perform extraction with resolved paths
+        success = perform_extraction(
+            pdf_path, args, extraction_mode, resolved_paths, 
+            enhanced_args['dedup_strategy']
+        )
+        
+        return success
+        
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        return False
+    except Exception as e:
+        console.print(f"[red]Unexpected error: {e}[/red]")
+        return False
+
+
+def plan_output_files(pdf_path: Path, desc: str, mode: str, groups: list, naming_options: dict) -> list[Path]:
+    """
+    Plan output file paths based on extraction parameters.
+    """
+    from pdf_manipulator.core.smart_filenames import generate_extraction_filename
+    
+    if mode == 'single':
+        # Single output file
+        output_path = generate_extraction_filename(
+            pdf_path, desc, mode,
+            timestamp=not naming_options['no_timestamp'],
+            custom_prefix=naming_options['name_prefix']
+        )
+        return [output_path]
+    
+    elif mode == 'separate':
+        # One file per page
+        paths = []
+        for group in groups:
+            if hasattr(group, 'pages') and group.pages:
+                for page in group.pages:
+                    page_desc = f"page{page}"
+                    output_path = generate_extraction_filename(
+                        pdf_path, page_desc, mode,
+                        timestamp=not naming_options['no_timestamp'],
+                        custom_prefix=naming_options['name_prefix']
+                    )
+                    paths.append(output_path)
+        return paths
+    
+    elif mode == 'grouped':
+        # One file per group
+        paths = []
+        for group_idx, group in enumerate(groups):
+            if hasattr(group, 'pages') and group.pages:
+                group_desc = getattr(group, 'original_spec', f"group{group_idx+1}")
+                output_path = generate_extraction_filename(
+                    pdf_path, group_desc, mode,
+                    timestamp=not naming_options['no_timestamp'],
+                    custom_prefix=naming_options['name_prefix']
+                )
+                paths.append(output_path)
+        return paths
+    
+    return []
+
+
+def perform_extraction(pdf_path: Path, args, mode: str, output_paths: list[Path], dedup_strategy: str) -> bool:
+    """
+    Perform the actual extraction with specified parameters.
+    """
+    from pdf_manipulator.core.operations import extract_pages, extract_pages_separate, extract_pages_grouped
+    from pdf_manipulator.core.folder_operations import _extract_pattern_and_template_args
+    
+    # Extract pattern and template args
+    patterns, template, source_page = _extract_pattern_and_template_args(args)
+    dry_run = getattr(args, 'dry_run', False)
+    
+    try:
+        if mode == 'single':
+            output_path, file_size = extract_pages(
+                pdf_path, args.extract_pages, patterns, template, source_page, dry_run, dedup_strategy
+            )
+            if output_path:
+                console.print(f"[green]✓ Created: {output_path.name} ({file_size:.2f} MB)[/green]")
+                return True
+                
+        elif mode == 'separate':
+            output_files = extract_pages_separate(
+                pdf_path, args.extract_pages, patterns, template, source_page, dry_run
+                # Note: extract_pages_separate needs dedup_strategy parameter added
+            )
+            if output_files:
+                console.print(f"[green]✓ Created {len(output_files)} separate files[/green]")
+                return True
+                
+        elif mode == 'grouped':
+            output_files = extract_pages_grouped(
+                pdf_path, args.extract_pages, patterns, template, source_page, dry_run, dedup_strategy
+            )
+            if output_files:
+                console.print(f"[green]✓ Created {len(output_files)} grouped files[/green]")
+                return True
+        
+        return False
+        
+    except Exception as e:
+        console.print(f"[red]Extraction failed: {e}[/red]")
+        return False
 
 
 if __name__ == "__main__":

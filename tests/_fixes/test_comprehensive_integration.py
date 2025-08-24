@@ -29,6 +29,7 @@ from datetime import datetime
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 try:
+    from pdf_manipulator.core.operations import get_ordered_pages_from_groups
     from pdf_manipulator.core.page_range.page_range_parser import PageRangeParser, parse_page_range
     from pdf_manipulator.core.page_range.boolean import looks_like_boolean_expression
     from pdf_manipulator.core.page_range.patterns import looks_like_pattern, looks_like_range_pattern
@@ -545,7 +546,6 @@ class ComprehensiveIntegrationTests:
             pages, desc, groups = parser.parse("5,1,3")
             
             # Get the actual order from groups
-            from pdf_manipulator.core.page_range.page_range_parser import get_ordered_pages_from_groups
             ordered_pages = get_ordered_pages_from_groups(groups, pages)
             
             # Should preserve order [5, 1, 3] not sort to [1, 3, 5]
