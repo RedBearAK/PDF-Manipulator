@@ -14,7 +14,6 @@ from pdf_manipulator.core.smart_filenames import (
     suggest_batch_naming_scheme,
     _describe_single_argument,
     _sanitize_for_filename,
-    _clean_existing_filename
 )
 
 
@@ -75,36 +74,6 @@ def test_filename_sanitization():
                 results.append(False)
         except Exception as e:
             print(f"  ✗ Sanitization failed for '{input_text}': {e}")
-            results.append(False)
-    
-    return all(results)
-
-
-def test_existing_filename_cleanup():
-    """Test cleanup of existing filename patterns."""
-    print("Testing existing filename cleanup...")
-    
-    test_cases = [
-        ("20240815_143052_document_pages1-5", "document"),
-        ("1692345600_report_extracted_summary", "report"),
-        ("my_document_groups_mixed", "my_document"),
-        ("clean_filename", "clean_filename"),
-        ("20240815_report", "report")
-    ]
-    
-    results = []
-    
-    for input_filename, expected in test_cases:
-        try:
-            result = _clean_existing_filename(input_filename)
-            if result == expected:
-                print(f"  ✓ '{input_filename}' -> '{result}'")
-                results.append(True)
-            else:
-                print(f"  ✗ '{input_filename}' -> '{result}', expected '{expected}'")
-                results.append(False)
-        except Exception as e:
-            print(f"  ✗ Cleanup failed for '{input_filename}': {e}")
             results.append(False)
     
     return all(results)
@@ -221,7 +190,6 @@ def main():
     tests = [
         ("Regex pattern imports", test_regex_pattern_imports),
         ("Filename sanitization", test_filename_sanitization),
-        ("Existing filename cleanup", test_existing_filename_cleanup),
         ("Smart description generation", test_smart_description_generation),
         ("Extraction filename generation", test_extraction_filename_generation),
         ("Batch naming scheme", test_batch_naming_scheme)

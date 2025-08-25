@@ -186,8 +186,8 @@ def generate_extraction_filename(pdf_path: Path,
     """
     stem = pdf_path.stem
     
-    # Clean up existing problematic patterns
-    stem = _clean_existing_filename(stem)
+    # # Clean up existing problematic patterns
+    # stem = _clean_existing_filename(stem)
     
     # Prepare description
     clean_desc = _sanitize_for_filename(page_description)
@@ -236,22 +236,22 @@ def generate_extraction_filename(pdf_path: Path,
     return pdf_path.parent / f"{filename_base}.pdf"
 
 
-def _clean_existing_filename(filename_stem: str) -> str:
-    """Clean up problematic patterns in existing filenames."""
-    # Remove existing timestamps
-    stem = unix_timestamp_rgx.sub('', filename_stem)
-    stem = datetime_timestamp_rgx.sub('', stem) # With or without "_" between
-    stem = datetime_date_only_rgx.sub('', stem) # Handle date-only timestamps
+# def _clean_existing_filename(filename_stem: str) -> str:
+#     """Clean up problematic patterns in existing filenames."""
+#     # Remove existing timestamps
+#     stem = unix_timestamp_rgx.sub('', filename_stem)
+#     stem = datetime_timestamp_rgx.sub('', stem) # With or without "_" between
+#     stem = datetime_date_only_rgx.sub('', stem) # Handle date-only timestamps
     
-    # Remove existing extraction patterns
-    stem = pages_extraction_rgx.sub('', stem)
-    stem = extracted_extraction_rgx.sub('', stem)
-    stem = groups_extraction_rgx.sub('', stem)
+#     # Remove existing extraction patterns
+#     stem = pages_extraction_rgx.sub('', stem)
+#     stem = extracted_extraction_rgx.sub('', stem)
+#     stem = groups_extraction_rgx.sub('', stem)
     
-    # Remove trailing separators
-    stem = stem.strip('_-')
+#     # Remove trailing separators
+#     stem = stem.strip('_-')
     
-    return stem if stem else 'document'
+#     return stem if stem else 'document'
 
 
 def suggest_batch_naming_scheme(pdf_paths: list[Path], 
@@ -281,13 +281,13 @@ def suggest_batch_naming_scheme(pdf_paths: list[Path],
         common_prefix = common_prefix.rstrip('_-')
     
     # Find common suffix (before existing operation markers)
-    cleaned_stems = [_clean_existing_filename(stem) for stem in stems]
+    # cleaned_stems = [_clean_existing_filename(stem) for stem in stems]
     common_suffix = ""
-    if len(cleaned_stems) > 1:
-        min_length = min(len(s) for s in cleaned_stems)
+    if len(stems) > 1:
+        min_length = min(len(s) for s in stems)
         for i in range(1, min_length + 1):
-            if all(s[-i] == cleaned_stems[0][-i] for s in cleaned_stems):
-                common_suffix = cleaned_stems[0][-i] + common_suffix
+            if all(s[-i] == stems[0][-i] for s in stems):
+                common_suffix = stems[0][-i] + common_suffix
             else:
                 break
         common_suffix = common_suffix.lstrip('_-')

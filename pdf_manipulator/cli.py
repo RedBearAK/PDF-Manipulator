@@ -11,7 +11,15 @@ from pdf_manipulator.ui import display_pdf_table
 from pdf_manipulator._version import __version__
 from pdf_manipulator.core.scanner import scan_folder, scan_file
 from pdf_manipulator.core.processor import process_single_file_operations
-from pdf_manipulator.core.folder_operations import handle_folder_operations
+from pdf_manipulator.core.operations import (
+    extract_pages,
+    extract_pages_separate,
+    extract_pages_grouped
+)
+from pdf_manipulator.core.folder_operations import (
+    handle_folder_operations,
+    _extract_pattern_and_template_args
+)
 from pdf_manipulator.core.malformation_utils import (
     check_and_fix_malformation_batch,
     check_and_fix_malformation_early
@@ -826,8 +834,6 @@ def perform_extraction(pdf_path: Path, args, mode: str, output_paths: list[Path]
     """
     Perform the actual extraction with specified parameters.
     """
-    from pdf_manipulator.core.operations import extract_pages, extract_pages_separate, extract_pages_grouped
-    from pdf_manipulator.core.folder_operations import _extract_pattern_and_template_args
     
     # Extract pattern and template args
     patterns, template, source_page = _extract_pattern_and_template_args(args)
@@ -835,26 +841,66 @@ def perform_extraction(pdf_path: Path, args, mode: str, output_paths: list[Path]
     
     try:
         if mode == 'single':
+            # output_path, file_size = extract_pages(
+            #     pdf_path, args.extract_pages, patterns, template, source_page, dry_run, dedup_strategy
+            # )
+
+            # In cli.py, when calling extract_pages:
             output_path, file_size = extract_pages(
-                pdf_path, args.extract_pages, patterns, template, source_page, dry_run, dedup_strategy
+                pdf_path=pdf_path,
+                page_range=args.extract_pages,
+                patterns=patterns,
+                template=template,
+                source_page=source_page,
+                dry_run=dry_run,
+                dedup_strategy=dedup_strategy,
+                use_timestamp=getattr(args, 'timestamp', False),
+                custom_prefix=getattr(args, 'name_prefix', None)
             )
+
             if output_path:
                 console.print(f"[green]✓ Created: {output_path.name} ({file_size:.2f} MB)[/green]")
                 return True
                 
         elif mode == 'separate':
+            # output_files = extract_pages_separate(
+            #     pdf_path, args.extract_pages, patterns, template, source_page, dry_run, dedup_strategy
+            #     # Note: extract_pages_separate needs dedup_strategy parameter added
+            # )
+
             output_files = extract_pages_separate(
-                pdf_path, args.extract_pages, patterns, template, source_page, dry_run, dedup_strategy
-                # Note: extract_pages_separate needs dedup_strategy parameter added
+                pdf_path=pdf_path, 
+                page_range=args.extract_pages, 
+                patterns=patterns, 
+                template=template, 
+                source_page=source_page, 
+                dry_run=dry_run, 
+                dedup_strategy=dedup_strategy,
+                use_timestamp=getattr(args, 'timestamp', False),      # ← Add when ready
+                custom_prefix=getattr(args, 'name_prefix', None)      # ← Add when ready
             )
+
             if output_files:
                 console.print(f"[green]✓ Created {len(output_files)} separate files[/green]")
                 return True
                 
         elif mode == 'grouped':
+            # output_files = extract_pages_grouped(
+            #     pdf_path, args.extract_pages, patterns, template, source_page, dry_run, dedup_strategy
+            # )
+
             output_files = extract_pages_grouped(
-                pdf_path, args.extract_pages, patterns, template, source_page, dry_run, dedup_strategy
+                pdf_path=pdf_path, 
+                page_range=args.extract_pages, 
+                patterns=patterns, 
+                template=template, 
+                source_page=source_page, 
+                dry_run=dry_run, 
+                dedup_strategy=dedup_strategy,
+                use_timestamp=getattr(args, 'timestamp', False),      # ← Add when ready
+                custom_prefix=getattr(args, 'name_prefix', None)      # ← Add when ready
             )
+
             if output_files:
                 console.print(f"[green]✓ Created {len(output_files)} grouped files[/green]")
                 return True

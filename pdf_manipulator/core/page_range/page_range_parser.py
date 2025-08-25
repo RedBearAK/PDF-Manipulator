@@ -142,12 +142,20 @@ class PageRangeParser:
             except Exception as e:
                 raise ValueError(f"Error parsing argument '{arg}': {e}")
         
-        # Create combined description
+        # # Create combined description
+        # if len(descriptions) == 1:
+        #     combined_desc = descriptions[0]
+        # else:
+        #     combined_desc = "Comma-separated: " + ", ".join(descriptions)
+
+        # ✅ NEW SMART CODE:
         if len(descriptions) == 1:
             combined_desc = descriptions[0]
         else:
-            combined_desc = "Comma-separated: " + ", ".join(descriptions)
-        
+            # Use smart description generation for multiple arguments
+            from pdf_manipulator.core.smart_filenames import generate_smart_description
+            combined_desc = generate_smart_description(arguments, len(all_pages))
+
         return all_pages, combined_desc, self.ordered_groups
     
     def _parse_single_argument(self, arg: str) -> tuple[set[int], str, list[PageGroup]]:

@@ -15,6 +15,10 @@ from rich.console import Console
 from pypdf import PdfReader, PdfWriter
 
 from pdf_manipulator.core.parser import parse_page_range
+from pdf_manipulator.core.smart_filenames import (
+    generate_extraction_filename,
+    generate_smart_description
+)
 from pdf_manipulator.core.warning_suppression import suppress_pdf_warnings
 
 console = Console()
@@ -78,10 +82,15 @@ def get_ordered_pages_from_groups(groups: list, fallback_pages: set = None,
     return ordered_pages
 
 
-def extract_pages(pdf_path: Path, page_range: str, 
-                    patterns: list[str] = None, template: str = None,
-                    source_page: int = 1, dry_run: bool = False,
-                    dedup_strategy: str = 'strict') -> tuple[Path, float]:
+# def extract_pages(pdf_path: Path, page_range: str, 
+#                     patterns: list[str] = None, template: str = None,
+#                     source_page: int = 1, dry_run: bool = False,
+#                     dedup_strategy: str = 'strict') -> tuple[Path, float]:
+# CORRECTED: Add the new parameters explicitly
+def extract_pages(pdf_path: Path, page_range: str, patterns: list[str] = None,
+                template: str = None, source_page: int = 1,
+                dry_run: bool = False, dedup_strategy: str = 'strict',
+                use_timestamp: bool = False, custom_prefix: str = None) -> tuple[Path, float]:
     """
     Extract pages with Phase 3 intelligent naming, order preservation, and deduplication.
     
@@ -126,14 +135,31 @@ def extract_pages(pdf_path: Path, page_range: str,
             except Exception as e:
                 console.print(f"[yellow]Smart naming failed: {e}[/yellow]")
                 output_path = pdf_path.parent / f"{pdf_path.stem}_pages{range_desc}.pdf"
-        else:
-            # Create filename based on page range
-            if len(ordered_pages) == 1:
-                output_path = pdf_path.parent / f"{pdf_path.stem}_page{ordered_pages[0]}.pdf"
-            else:
-                timestamp = int(time.time())
-                output_path = pdf_path.parent / f"{timestamp}_{pdf_path.stem}_pages{range_desc}.pdf"
         
+        # else:
+        #     # Create filename based on page range
+        #     if len(ordered_pages) == 1:
+        #         output_path = pdf_path.parent / f"{pdf_path.stem}_page{ordered_pages[0]}.pdf"
+        #     else:
+        #         timestamp = int(time.time())
+        #         output_path = pdf_path.parent / f"{timestamp}_{pdf_path.stem}_pages{range_desc}.pdf"
+
+        else:
+            # FIXED: Use smart filename generation instead of broken Unix timestamps
+            
+            if len(ordered_pages) == 1:
+                # Single page extraction
+                page_desc = f"page{ordered_pages[0]}"
+                output_path = generate_extraction_filename(
+                    pdf_path, page_desc, 'single', use_timestamp, custom_prefix
+                )
+            else:
+                # Multiple pages - generate smart description
+                smart_desc = generate_smart_description([page_range], len(ordered_pages))
+                output_path = generate_extraction_filename(
+                    pdf_path, smart_desc, 'single', use_timestamp, custom_prefix
+                )
+
         if dry_run:
             console.print(f"[cyan]Would create:[/cyan] {output_path.name}")
             return None, 0
@@ -168,7 +194,8 @@ def extract_pages(pdf_path: Path, page_range: str,
 
 def extract_pages_grouped(pdf_path: Path, page_range: str, patterns: list[str] = None,
                 template: str = None, source_page: int = 1,
-                dry_run: bool = False, dedup_strategy: str = 'groups') -> list[tuple[Path, float]]:
+                dry_run: bool = False, dedup_strategy: str = 'groups',
+                use_timestamp: bool = False, custom_prefix: str = None) -> list[tuple[Path, float]]:
     """
     Extract pages respecting original groupings with order preservation and deduplication.
     
@@ -290,128 +317,10 @@ def extract_pages_grouped(pdf_path: Path, page_range: str, patterns: list[str] =
         return []
 
 
-def extract_pages_grouped(pdf_path: Path, page_range: str, patterns: list[str] = None,
-                            template: str = None, source_page: int = 1,
-                            dry_run: bool = False) -> list[tuple[Path, float]]:
-    """
-    Extract pages respecting original groupings with order preservation.
-    
-    Args:
-        pdf_path: Source PDF file
-        page_range: Pages to extract with grouping syntax and order preservation
-        patterns: List of enhanced pattern strings for content extraction
-        template: Filename template for smart naming
-        source_page: Fallback page for pattern extraction
-        dry_run: Whether to perform actual extraction
-        
-    Returns:
-        List of (output_path, file_size) tuples for each group in the specified order
-    """
-    try:
-        with suppress_pdf_warnings():
-            reader = PdfReader(pdf_path)
-            total_pages = len(reader.pages)
-        
-        # Parse page range with grouping and order preservation
-        pages_to_extract, range_desc, groups = parse_page_range(page_range, total_pages, pdf_path)
-        
-        if not pages_to_extract:
-            raise ValueError(f"No valid pages found for range: {page_range}")
-        
-        if not groups:
-            # Fallback to single group
-            ordered_pages = get_ordered_pages_from_groups([], pages_to_extract)
-            from pdf_manipulator.core.page_range.page_group import PageGroup
-            groups = [PageGroup(ordered_pages, False, range_desc)]
-        
-        output_files = []
-        
-        if dry_run:
-            console.print(f"\n[cyan]DRY RUN: Would create {len(groups)} grouped files[/cyan]")
-        
-        # Process each group in order, respecting individual group order preferences
-        for group_idx, group in enumerate(groups):
-            # FIXED: Skip empty groups to prevent list index out of range errors
-            if not group.pages:
-                console.print(f"[dim]Skipping empty group {group_idx+1}: {group.original_spec} (no matches)[/dim]")
-                continue
-            
-            # Respect the group's order preference
-            if getattr(group, 'preserve_order', False):
-                group_pages = group.pages  # Use exact order from group
-            else:
-                group_pages = sorted(group.pages)  # Sort for backward compatibility
-            
-            # Generate filename for this group
-            if patterns and template:
-                from pdf_manipulator.renamer.filename_generator import FilenameGenerator
-                generator = FilenameGenerator()
-                
-                # FIXED: Now safe to access group_pages[0] since we've verified group is not empty
-                pattern_source_page = group_pages[0]
-                group_desc = getattr(group, 'original_spec', f"group{group_idx+1}")
-                
-                try:
-                    output_path, extraction_results = generator.generate_smart_filename(
-                        pdf_path, group_desc, patterns, template, pattern_source_page, dry_run=dry_run
-                    )
-                    
-                    if dry_run:
-                        console.print(f"[cyan]Group {group_idx+1} (pages {group_pages}) would create:[/cyan] {output_path.name}")
-                        continue
-                        
-                except Exception as e:
-                    console.print(f"[yellow]Smart naming failed for group {group_idx+1}: {e}[/yellow]")
-                    output_path = pdf_path.parent / f"{pdf_path.stem}_group{group_idx+1}.pdf"
-            else:
-                # Fallback naming - safe because we know group_pages is not empty
-                if len(group_pages) == 1:
-                    output_path = pdf_path.parent / f"{pdf_path.stem}_page{group_pages[0]}.pdf"
-                else:
-                    page_range_str = f"{group_pages[0]}-{group_pages[-1]}" if len(group_pages) > 1 else str(group_pages[0])
-                    output_path = pdf_path.parent / f"{pdf_path.stem}_pages{page_range_str}.pdf"
-                
-                if dry_run:
-                    console.print(f"[cyan]Group {group_idx+1} (pages {group_pages}) would create:[/cyan] {output_path.name}")
-                    continue
-            
-            # Create grouped PDF with pages in the specified order
-            writer = PdfWriter()
-            for page_num in group_pages:
-                if 1 <= page_num <= total_pages:
-                    writer.add_page(reader.pages[page_num - 1])  # Convert to 0-indexed
-            
-            # Write output file
-            with open(output_path, 'wb') as output_file:
-                writer.write(output_file)
-            
-            file_size = output_path.stat().st_size / 1024 / 1024  # MB
-            output_files.append((output_path, file_size))
-            
-            # Show group completion with order information
-            if getattr(group, 'preserve_order', False):
-                console.print(f"[green]✓ Group {group_idx+1}: extracted pages in specified order: {group_pages}[/green]")
-            else:
-                console.print(f"[green]✓ Group {group_idx+1}: extracted pages {group_pages}[/green]")
-        
-        if not dry_run:
-            # Show final summary excluding empty groups
-            actual_groups_created = len(output_files)
-            console.print(f"[green]✓ Created {actual_groups_created} grouped files[/green]")
-        
-        return output_files
-
-    except ValueError as e:
-        console.print(f"[red]Error: {e}[/red]")
-        return []
-    except Exception as e:
-        console.print(f"[red]Error extracting grouped pages from {pdf_path.name}: {e}[/red]")
-        return []
-
-
 def extract_pages_separate(pdf_path: Path, page_range: str, patterns: list[str] = None,
                             template: str = None, source_page: int = 1,
-                            dry_run: bool = False, dedup_strategy: str = 'strict'
+                            dry_run: bool = False, dedup_strategy: str = 'strict',
+                            use_timestamp: bool = False, custom_prefix: str = None
                             ) -> list[tuple[Path, float]]:
     """
     Extract specified pages as separate documents (one file per page).
