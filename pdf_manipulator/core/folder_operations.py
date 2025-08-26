@@ -196,8 +196,12 @@ def process_extract_split_mode(args: argparse.Namespace, pdf_files: list[tuple[P
 
 
 def process_batch_extract(args: argparse.Namespace, pdf_files: list[tuple[Path, int, float]],
-                         patterns: list[str], template: str, source_page: int, dry_run: bool):
+                            patterns: list[str], template: str, source_page: int, dry_run: bool):
     """Handle batch extraction processing with pattern support."""
+
+    # Extract enhanced arguments including conflict strategy
+    from pdf_manipulator.cli import extract_enhanced_args
+    enhanced_args = extract_enhanced_args(args)
 
     suppress_context = suppress_all_pdf_warnings() if not dry_run else None
     
@@ -206,14 +210,26 @@ def process_batch_extract(args: argparse.Namespace, pdf_files: list[tuple[Path, 
         for pdf_path, page_count, file_size in pdf_files:
             console.print(f"\n[cyan]Processing {pdf_path.name}[/cyan]...")
             try:
-                # Validate extraction for this PDF
+                # Validate extraction for this PDF (early error detection)
                 from pdf_manipulator.core.parser import parse_page_range_from_args
                 pages_to_extract, desc, groups = parse_page_range_from_args(args, page_count, pdf_path)
+                
+                # Variables above are intentionally unused - this is validation only
+                # Operations functions do their own parsing internally
                 
                 if args.respect_groups:
                     # Extract with groupings respected
                     output_files = extract_pages_grouped(
-                        pdf_path, args.extract_pages, patterns, template, source_page, dry_run
+                        pdf_path=pdf_path,
+                        page_range=args.extract_pages,
+                        patterns=patterns,
+                        template=template,
+                        source_page=source_page,
+                        dry_run=dry_run,
+                        dedup_strategy=enhanced_args['dedup_strategy'],
+                        use_timestamp=getattr(args, 'timestamp', False),
+                        custom_prefix=getattr(args, 'name_prefix', None),
+                        conflict_strategy=enhanced_args['conflict_strategy']
                     )
                     if output_files and not dry_run:
                         console.print(f"[green]✓ Created {len(output_files)} grouped files[/green]")
@@ -224,7 +240,16 @@ def process_batch_extract(args: argparse.Namespace, pdf_files: list[tuple[Path, 
                 elif args.separate_files:
                     # Extract as separate files
                     output_files = extract_pages_separate(
-                        pdf_path, args.extract_pages, patterns, template, source_page, dry_run
+                        pdf_path=pdf_path,
+                        page_range=args.extract_pages,
+                        patterns=patterns,
+                        template=template,
+                        source_page=source_page,
+                        dry_run=dry_run,
+                        dedup_strategy=enhanced_args['dedup_strategy'],
+                        use_timestamp=getattr(args, 'timestamp', False),
+                        custom_prefix=getattr(args, 'name_prefix', None),
+                        conflict_strategy=enhanced_args['conflict_strategy']
                     )
                     if output_files and not dry_run:
                         console.print(f"[green]✓ Created {len(output_files)} separate files[/green]")
@@ -234,7 +259,16 @@ def process_batch_extract(args: argparse.Namespace, pdf_files: list[tuple[Path, 
                 else:
                     # Extract as single document
                     output_path, new_size = extract_pages(
-                        pdf_path, args.extract_pages, patterns, template, source_page, dry_run
+                        pdf_path=pdf_path,
+                        page_range=args.extract_pages,
+                        patterns=patterns,
+                        template=template,
+                        source_page=source_page,
+                        dry_run=dry_run,
+                        dedup_strategy=enhanced_args['dedup_strategy'],
+                        use_timestamp=getattr(args, 'timestamp', False),
+                        custom_prefix=getattr(args, 'name_prefix', None),
+                        conflict_strategy=enhanced_args['conflict_strategy']
                     )
                     if output_path and not dry_run:
                         console.print(f"[green]✓ Created:[/green] {output_path.name}")

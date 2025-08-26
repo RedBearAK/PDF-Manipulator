@@ -15,6 +15,7 @@ from rich.console import Console
 from pypdf import PdfReader, PdfWriter
 
 from pdf_manipulator.core.parser import parse_page_range
+from pdf_manipulator.core.file_conflicts import resolve_file_conflicts
 from pdf_manipulator.core.smart_filenames import (
     generate_extraction_filename,
     generate_smart_description
@@ -82,15 +83,11 @@ def get_ordered_pages_from_groups(groups: list, fallback_pages: set = None,
     return ordered_pages
 
 
-# def extract_pages(pdf_path: Path, page_range: str, 
-#                     patterns: list[str] = None, template: str = None,
-#                     source_page: int = 1, dry_run: bool = False,
-#                     dedup_strategy: str = 'strict') -> tuple[Path, float]:
-# CORRECTED: Add the new parameters explicitly
 def extract_pages(pdf_path: Path, page_range: str, patterns: list[str] = None,
                 template: str = None, source_page: int = 1,
                 dry_run: bool = False, dedup_strategy: str = 'strict',
-                use_timestamp: bool = False, custom_prefix: str = None) -> tuple[Path, float]:
+                use_timestamp: bool = False, custom_prefix: str = None,
+                conflict_strategy: str = 'ask') -> tuple[Path, float]:
     """
     Extract pages with Phase 3 intelligent naming, order preservation, and deduplication.
     
@@ -102,6 +99,7 @@ def extract_pages(pdf_path: Path, page_range: str, patterns: list[str] = None,
         source_page: Fallback page for pattern extraction (overridden by pg specs)
         dry_run: Whether to perform actual extraction
         dedup_strategy: Deduplication strategy to apply
+        conflict_strategy: How to handle existing files ('ask', 'overwrite', 'skip', 'rename', 'fail')
         
     Returns:
         Tuple of (output_path, file_size) or (None, 0) if dry run or error
@@ -136,14 +134,6 @@ def extract_pages(pdf_path: Path, page_range: str, patterns: list[str] = None,
                 console.print(f"[yellow]Smart naming failed: {e}[/yellow]")
                 output_path = pdf_path.parent / f"{pdf_path.stem}_pages{range_desc}.pdf"
         
-        # else:
-        #     # Create filename based on page range
-        #     if len(ordered_pages) == 1:
-        #         output_path = pdf_path.parent / f"{pdf_path.stem}_page{ordered_pages[0]}.pdf"
-        #     else:
-        #         timestamp = int(time.time())
-        #         output_path = pdf_path.parent / f"{timestamp}_{pdf_path.stem}_pages{range_desc}.pdf"
-
         else:
             # FIXED: Use smart filename generation instead of broken Unix timestamps
             
@@ -159,6 +149,20 @@ def extract_pages(pdf_path: Path, page_range: str, patterns: list[str] = None,
                 output_path = generate_extraction_filename(
                     pdf_path, smart_desc, 'single', use_timestamp, custom_prefix
                 )
+
+
+        if not dry_run:
+            # CRITICAL: Check for file conflicts BEFORE writing
+            resolved_paths, skipped_paths = resolve_file_conflicts([output_path], conflict_strategy, interactive=True)
+            
+            if not resolved_paths:
+                # User chose to skip
+                console.print(f"[yellow]Skipping existing file: {output_path.name}[/yellow]")
+                return None, 0
+            
+            output_path = resolved_paths[0]  # Use the resolved path
+        
+
 
         if dry_run:
             console.print(f"[cyan]Would create:[/cyan] {output_path.name}")
@@ -195,7 +199,8 @@ def extract_pages(pdf_path: Path, page_range: str, patterns: list[str] = None,
 def extract_pages_grouped(pdf_path: Path, page_range: str, patterns: list[str] = None,
                 template: str = None, source_page: int = 1,
                 dry_run: bool = False, dedup_strategy: str = 'groups',
-                use_timestamp: bool = False, custom_prefix: str = None) -> list[tuple[Path, float]]:
+                use_timestamp: bool = False, custom_prefix: str = None,
+                conflict_strategy: str = 'ask') -> list[tuple[Path, float]]:
     """
     Extract pages respecting original groupings with order preservation and deduplication.
     
@@ -207,10 +212,43 @@ def extract_pages_grouped(pdf_path: Path, page_range: str, patterns: list[str] =
         source_page: Fallback page for pattern extraction
         dry_run: Whether to perform actual extraction
         dedup_strategy: Deduplication strategy to apply
+        use_timestamp: Whether to include timestamp in filenames
+        custom_prefix: Custom prefix for output filenames
+        conflict_strategy: How to handle existing files ('ask', 'overwrite', 'skip', 'rename', 'fail')
         
     Returns:
         List of (output_path, file_size) tuples for each group in the specified order
     """
+    
+    def handle_group_conflicts_and_dryrun(output_path: Path, group_idx: int, group_pages: list) -> Path | None:
+        """
+        Handle conflict resolution and dry run logic for a group.
+        
+        Args:
+            output_path: Proposed output path for this group
+            group_idx: Group index (0-based) for display purposes  
+            group_pages: List of pages in this group
+            
+        Returns:
+            Resolved output path if should proceed with file creation, 
+            None if should skip this group (dry run or user chose skip)
+        """
+        # Handle conflict resolution for real runs
+        if not dry_run:
+            resolved_paths, skipped_paths = resolve_file_conflicts([output_path], conflict_strategy, interactive=True)
+            
+            if not resolved_paths:
+                # User chose to skip this group
+                console.print(f"[yellow]Skipping group {group_idx+1}: {output_path.name}[/yellow]")
+                return None
+            
+            return resolved_paths[0]  # Use the resolved path for this group
+        
+        # Handle dry run
+        else:
+            console.print(f"[cyan]Group {group_idx+1} (pages {group_pages}) would create:[/cyan] {output_path.name}")
+            return None
+    
     try:
         with suppress_pdf_warnings():
             reader = PdfReader(pdf_path)
@@ -264,13 +302,23 @@ def extract_pages_grouped(pdf_path: Path, page_range: str, patterns: list[str] =
                         pdf_path, group_desc, patterns, template, pattern_source_page, dry_run=dry_run
                     )
                     
-                    if dry_run:
-                        console.print(f"[cyan]Group {group_idx+1} (pages {group_pages}) would create:[/cyan] {output_path.name}")
-                        continue
+                    # CRITICAL: Handle conflicts and dry run for smart naming path
+                    resolved_output_path = handle_group_conflicts_and_dryrun(output_path, group_idx, group_pages)
+                    if resolved_output_path is None:
+                        continue  # Skip this group (dry run or user chose skip)
+                    
+                    output_path = resolved_output_path
                         
                 except Exception as e:
                     console.print(f"[yellow]Smart naming failed for group {group_idx+1}: {e}[/yellow]")
                     output_path = pdf_path.parent / f"{pdf_path.stem}_group{group_idx+1}.pdf"
+                    
+                    # CRITICAL: Handle conflicts and dry run for smart naming fallback
+                    resolved_output_path = handle_group_conflicts_and_dryrun(output_path, group_idx, group_pages)
+                    if resolved_output_path is None:
+                        continue  # Skip this group (dry run or user chose skip)
+                    
+                    output_path = resolved_output_path
             else:
                 # Fallback naming - safe because we know group_pages is not empty
                 if len(group_pages) == 1:
@@ -279,9 +327,12 @@ def extract_pages_grouped(pdf_path: Path, page_range: str, patterns: list[str] =
                     page_range_str = f"{group_pages[0]}-{group_pages[-1]}" if len(group_pages) > 1 else str(group_pages[0])
                     output_path = pdf_path.parent / f"{pdf_path.stem}_pages{page_range_str}.pdf"
                 
-                if dry_run:
-                    console.print(f"[cyan]Group {group_idx+1} (pages {group_pages}) would create:[/cyan] {output_path.name}")
-                    continue
+                # CRITICAL: Handle conflicts and dry run for fallback naming path
+                resolved_output_path = handle_group_conflicts_and_dryrun(output_path, group_idx, group_pages)
+                if resolved_output_path is None:
+                    continue  # Skip this group (dry run or user chose skip)
+                
+                output_path = resolved_output_path
             
             # Create grouped PDF with pages in the specified order
             writer = PdfWriter()
@@ -320,8 +371,8 @@ def extract_pages_grouped(pdf_path: Path, page_range: str, patterns: list[str] =
 def extract_pages_separate(pdf_path: Path, page_range: str, patterns: list[str] = None,
                             template: str = None, source_page: int = 1,
                             dry_run: bool = False, dedup_strategy: str = 'strict',
-                            use_timestamp: bool = False, custom_prefix: str = None
-                            ) -> list[tuple[Path, float]]:
+                            use_timestamp: bool = False, custom_prefix: str = None,
+                            conflict_strategy: str = 'ask') -> list[tuple[Path, float]]:
     """
     Extract specified pages as separate documents (one file per page).
     
@@ -390,6 +441,18 @@ def extract_pages_separate(pdf_path: Path, page_range: str, patterns: list[str] 
             # Generate output filename for separate page
             output_path = pdf_path.parent / f"{pdf_path.stem}_page{page_num:02d}.pdf"
             
+
+            # CRITICAL: Check for file conflicts BEFORE writing each page
+            if not dry_run:
+                resolved_paths, skipped_paths = resolve_file_conflicts([output_path], conflict_strategy, interactive=True)
+                
+                if not resolved_paths:
+                    # User chose to skip this page
+                    console.print(f"[yellow]Skipping page {page_num}: {output_path.name}[/yellow]")
+                    continue  # Skip this page, continue with next
+                
+                output_path = resolved_paths[0]  # Use the resolved path for this page
+
             if dry_run:
                 console.print(f"[cyan]Page {page_num} would create:[/cyan] {output_path.name}")
                 continue

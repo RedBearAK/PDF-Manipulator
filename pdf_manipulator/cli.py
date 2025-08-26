@@ -658,18 +658,28 @@ def extract_enhanced_args(args) -> dict:
     # Determine deduplication strategy
     dedup_strategy = determine_default_dedup_strategy(args)
     
-    # Extract conflict resolution strategy  
-    conflict_strategy = getattr(args, 'conflicts', 'ask')
+    # Extract base conflict resolution strategy  
+    base_conflict_strategy = getattr(args, 'conflicts', 'ask')
+    
+    # CRITICAL: Apply batch mode safety conversion
+    is_batch = getattr(args, 'batch', False)
+    if is_batch and base_conflict_strategy == 'ask':
+        # Can't ask in batch mode - convert to safe rename strategy
+        conflict_strategy = 'rename'
+        console.print("[cyan]Batch mode: converting 'ask' conflict strategy to 'rename' for safety[/cyan]")
+    else:
+        # Keep the specified strategy for interactive mode or explicit batch strategies
+        conflict_strategy = base_conflict_strategy
     
     # FLATTENED STRUCTURE - no nested dictionaries
     return {
         # Core behavior flags
-        'interactive': not getattr(args, 'batch', False),
+        'interactive': not is_batch,
         'preview': getattr(args, 'preview', False),
         
         # Strategy settings
         'dedup_strategy': dedup_strategy,
-        'conflict_strategy': conflict_strategy,
+        'conflict_strategy': conflict_strategy,  # Now with batch mode conversion
         
         # Naming options (flattened)
         'smart_names': getattr(args, 'smart_names', False),
@@ -830,7 +840,7 @@ def plan_output_files(pdf_path: Path, desc: str, mode: str, groups: list, naming
     return []
 
 
-def perform_extraction(pdf_path: Path, args, mode: str, output_paths: list[Path], dedup_strategy: str) -> bool:
+def perform_extraction(pdf_path: Path, args, mode: str) -> bool:
     """
     Perform the actual extraction with specified parameters.
     """
@@ -839,13 +849,11 @@ def perform_extraction(pdf_path: Path, args, mode: str, output_paths: list[Path]
     patterns, template, source_page = _extract_pattern_and_template_args(args)
     dry_run = getattr(args, 'dry_run', False)
     
+    # Extract enhanced args
+    enhanced_args = extract_enhanced_args(args)
+    
     try:
         if mode == 'single':
-            # output_path, file_size = extract_pages(
-            #     pdf_path, args.extract_pages, patterns, template, source_page, dry_run, dedup_strategy
-            # )
-
-            # In cli.py, when calling extract_pages:
             output_path, file_size = extract_pages(
                 pdf_path=pdf_path,
                 page_range=args.extract_pages,
@@ -853,21 +861,18 @@ def perform_extraction(pdf_path: Path, args, mode: str, output_paths: list[Path]
                 template=template,
                 source_page=source_page,
                 dry_run=dry_run,
-                dedup_strategy=dedup_strategy,
+                dedup_strategy=enhanced_args['dedup_strategy'],      # Use from enhanced_args
                 use_timestamp=getattr(args, 'timestamp', False),
-                custom_prefix=getattr(args, 'name_prefix', None)
+                custom_prefix=getattr(args, 'name_prefix', None),
+                conflict_strategy=enhanced_args['conflict_strategy']  # ADD THIS LINE
             )
 
             if output_path:
                 console.print(f"[green]✓ Created: {output_path.name} ({file_size:.2f} MB)[/green]")
                 return True
                 
-        elif mode == 'separate':
-            # output_files = extract_pages_separate(
-            #     pdf_path, args.extract_pages, patterns, template, source_page, dry_run, dedup_strategy
-            #     # Note: extract_pages_separate needs dedup_strategy parameter added
-            # )
 
+        elif mode == 'separate':
             output_files = extract_pages_separate(
                 pdf_path=pdf_path, 
                 page_range=args.extract_pages, 
@@ -875,20 +880,18 @@ def perform_extraction(pdf_path: Path, args, mode: str, output_paths: list[Path]
                 template=template, 
                 source_page=source_page, 
                 dry_run=dry_run, 
-                dedup_strategy=dedup_strategy,
-                use_timestamp=getattr(args, 'timestamp', False),      # ← Add when ready
-                custom_prefix=getattr(args, 'name_prefix', None)      # ← Add when ready
+                dedup_strategy=enhanced_args['dedup_strategy'],      # Use from enhanced_args
+                use_timestamp=getattr(args, 'timestamp', False),
+                custom_prefix=getattr(args, 'name_prefix', None),
+                conflict_strategy=enhanced_args['conflict_strategy']  # ADD THIS LINE
             )
 
             if output_files:
                 console.print(f"[green]✓ Created {len(output_files)} separate files[/green]")
                 return True
                 
-        elif mode == 'grouped':
-            # output_files = extract_pages_grouped(
-            #     pdf_path, args.extract_pages, patterns, template, source_page, dry_run, dedup_strategy
-            # )
 
+        elif mode == 'grouped':
             output_files = extract_pages_grouped(
                 pdf_path=pdf_path, 
                 page_range=args.extract_pages, 
@@ -896,9 +899,10 @@ def perform_extraction(pdf_path: Path, args, mode: str, output_paths: list[Path]
                 template=template, 
                 source_page=source_page, 
                 dry_run=dry_run, 
-                dedup_strategy=dedup_strategy,
-                use_timestamp=getattr(args, 'timestamp', False),      # ← Add when ready
-                custom_prefix=getattr(args, 'name_prefix', None)      # ← Add when ready
+                dedup_strategy=enhanced_args['dedup_strategy'],      # Use from enhanced_args
+                use_timestamp=getattr(args, 'timestamp', False),
+                custom_prefix=getattr(args, 'name_prefix', None),
+                conflict_strategy=enhanced_args['conflict_strategy']  # ADD THIS LINE
             )
 
             if output_files:
