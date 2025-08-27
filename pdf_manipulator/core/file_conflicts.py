@@ -23,18 +23,51 @@ class ConflictResolutionStrategy:
 
 def check_file_conflicts(output_paths: list[Path]) -> list[Path]:
     """
-    Check which output paths already exist.
+    Check which output paths already exist or would conflict.
+    
+    Enhanced to detect both exact matches and case-insensitive conflicts
+    to prevent confusing near-duplicate filenames.
     
     Args:
         output_paths: List of planned output file paths
         
     Returns:
-        List of paths that already exist (conflicts)
+        List of paths that already exist or would cause conflicts
     """
     conflicts = []
+    
     for path in output_paths:
+        # First check for exact match (fastest)
         if path.exists():
             conflicts.append(path)
+            continue
+        
+        # Then check for case-insensitive conflicts in the same directory
+        # This prevents confusing situations like having both "File.pdf" and "file.pdf"
+        parent_dir = path.parent
+        
+        if parent_dir.exists():
+            # Get all existing files in the directory
+            try:
+                existing_files = list(parent_dir.iterdir())
+                path_name_lower = path.name.lower()
+                
+                # Check if any existing file has the same name when compared case-insensitively
+                for existing_file in existing_files:
+                    if (existing_file.is_file() and 
+                        existing_file.name.lower() == path_name_lower and
+                        existing_file.name != path.name):  # Different case, same name
+                        
+                        # Found a case-insensitive conflict
+                        conflicts.append(path)  # Add the planned path as conflicting
+                        console.print(f"[yellow]Case-insensitive conflict detected:[/yellow] "
+                                    f"Would create '{path.name}' but '{existing_file.name}' already exists")
+                        break
+                        
+            except (OSError, PermissionError):
+                # If we can't read the directory, just continue with exact matching
+                pass
+    
     return conflicts
 
 
@@ -169,42 +202,70 @@ def ask_custom_filename(original_path: Path) -> Optional[Path]:
             return new_path
 
 
-def generate_unique_filename(path: Path, max_attempts: int = 100) -> Path:
+def _path_would_conflict(path: Path) -> bool:
+    """
+    Check if a path would conflict with existing files (exact or case-insensitive).
+    
+    Args:
+        path: Path to check
+        
+    Returns:
+        True if path would conflict, False otherwise
+    """
+    # Check exact match first
+    if path.exists():
+        return True
+    
+    # Check case-insensitive conflicts
+    parent_dir = path.parent
+    if not parent_dir.exists():
+        return False
+    
+    try:
+        existing_files = list(parent_dir.iterdir())
+        path_name_lower = path.name.lower()
+        
+        for existing_file in existing_files:
+            if (existing_file.is_file() and 
+                existing_file.name.lower() == path_name_lower):
+                return True
+                
+    except (OSError, PermissionError):
+        # If we can't read directory, assume no conflict
+        pass
+    
+    return False
+
+
+def generate_unique_filename(path: Path) -> Path:
     """
     Generate a unique filename by adding a numeric suffix.
     
+    Enhanced to avoid both exact matches and case-insensitive conflicts.
+    
     Args:
-        path: Original file path
-        max_attempts: Maximum number of suffix attempts
+        path: Original path that conflicts
         
     Returns:
-        Unique file path
-        
-    Raises:
-        ValueError: If unable to generate unique name within max_attempts
+        Path with unique filename
     """
-    if not path.exists():
+    if not _path_would_conflict(path):
         return path
     
     stem = path.stem
     suffix = path.suffix
     parent = path.parent
     
-    # Check if filename already has a numeric suffix
-    match = re.search(r'_(\d+)$', stem)
-    if match:
-        base_stem = stem[:match.start()]
-        start_num = int(match.group(1)) + 1
-    else:
-        base_stem = stem
-        start_num = 1
-    
-    for i in range(start_num, start_num + max_attempts):
-        candidate = parent / f"{base_stem}_{i}{suffix}"
-        if not candidate.exists():
+    # Try adding numeric suffixes until we find one that doesn't conflict
+    for i in range(1, 1000):  # Reasonable upper limit
+        candidate = parent / f"{stem}_{i}{suffix}"
+        if not _path_would_conflict(candidate):
             return candidate
     
-    raise ValueError(f"Unable to generate unique filename for {path.name} after {max_attempts} attempts")
+    # If we somehow can't find a unique name, fall back to timestamp
+    import time
+    timestamp = int(time.time())
+    return parent / f"{stem}_{timestamp}{suffix}"
 
 
 def preview_file_operations(original_paths: list[Path], 

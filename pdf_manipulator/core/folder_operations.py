@@ -229,7 +229,8 @@ def process_batch_extract(args: argparse.Namespace, pdf_files: list[tuple[Path, 
                         dedup_strategy=enhanced_args['dedup_strategy'],
                         use_timestamp=getattr(args, 'timestamp', False),
                         custom_prefix=getattr(args, 'name_prefix', None),
-                        conflict_strategy=enhanced_args['conflict_strategy']
+                        conflict_strategy=enhanced_args['conflict_strategy'],  # FIXED: Added this parameter
+                        interactive=enhanced_args['interactive']  # FIXED: Added this parameter
                     )
                     if output_files and not dry_run:
                         console.print(f"[green]✓ Created {len(output_files)} grouped files[/green]")
@@ -249,7 +250,8 @@ def process_batch_extract(args: argparse.Namespace, pdf_files: list[tuple[Path, 
                         dedup_strategy=enhanced_args['dedup_strategy'],
                         use_timestamp=getattr(args, 'timestamp', False),
                         custom_prefix=getattr(args, 'name_prefix', None),
-                        conflict_strategy=enhanced_args['conflict_strategy']
+                        conflict_strategy=enhanced_args['conflict_strategy'],  # FIXED: Added this parameter
+                        interactive=enhanced_args['interactive']  # FIXED: Added this parameter
                     )
                     if output_files and not dry_run:
                         console.print(f"[green]✓ Created {len(output_files)} separate files[/green]")
@@ -268,7 +270,8 @@ def process_batch_extract(args: argparse.Namespace, pdf_files: list[tuple[Path, 
                         dedup_strategy=enhanced_args['dedup_strategy'],
                         use_timestamp=getattr(args, 'timestamp', False),
                         custom_prefix=getattr(args, 'name_prefix', None),
-                        conflict_strategy=enhanced_args['conflict_strategy']
+                        conflict_strategy=enhanced_args['conflict_strategy'],  # FIXED: Added this parameter  
+                        interactive=enhanced_args['interactive']  # FIXED: Added this parameter
                     )
                     if output_path and not dry_run:
                         console.print(f"[green]✓ Created:[/green] {output_path.name}")
@@ -299,66 +302,65 @@ def process_batch_split(args: argparse.Namespace, pdf_files: list[tuple[Path, in
                     console.print("[yellow]✓ Deleted original[/yellow]")
 
 
+
 def process_interactive_extract(args: argparse.Namespace, pdf_files: list[tuple[Path, int, float]],
-                               patterns: list[str], template: str, source_page: int, dry_run: bool):
+                                patterns: list[str], template: str, source_page: int, dry_run: bool):
     """Handle interactive extraction processing with pattern support."""
-
-    # For extract, ask about each PDF
-    for pdf_path, page_count, file_size in pdf_files:
-        console.print(f"\n[cyan]{pdf_path.name}[/cyan] - {page_count} pages, {file_size:.2f} MB")
-
-        # Check for malformation on individual file
-        pdf_files_single = [(pdf_path, page_count, file_size)]
-        fixed_files = check_and_fix_malformation_with_args(pdf_files_single, args)
-        
-        if not fixed_files:
-            console.print("[yellow]Skipping this PDF as requested[/yellow]")
-            continue  # Skip to next PDF in the loop
-        
-        # Use the potentially fixed file info
-        pdf_path, page_count, file_size = fixed_files[0]
-        
-        try:
-            # Validate extraction for this PDF
-            from pdf_manipulator.core.parser import parse_page_range_from_args
-            pages_to_extract, desc, groups = parse_page_range_from_args(args, page_count, pdf_path)
-            
-            # PHASE 2: Show pattern preview for this file
-            if patterns and template:
-                try:
-                    from pdf_manipulator.renamer.filename_generator import FilenameGenerator
-                    
-                    generator = FilenameGenerator()
-                    preview = generator.preview_filename_generation(
-                        pdf_path, desc, patterns, template, source_page
-                    )
-                    
-                    console.print(f"[cyan]Pattern Preview:[/cyan]")
-                    for var_name, details in preview.get('extraction_preview', {}).items():
-                        console.print(f"  {var_name}: {details['simulated_value']}")
-                    console.print(f"[cyan]Filename:[/cyan] {preview['filename_preview']}")
-                    
-                except Exception as e:
-                    console.print(f"[yellow]Pattern preview failed: {e}[/yellow]")
-            
-            # Determine extraction mode
-            if args.respect_groups:
-                extraction_mode = 'grouped'
-            elif args.separate_files:
-                extraction_mode = 'separate'
-            else:
-                extraction_mode = decide_extraction_mode(pages_to_extract, groups, True)
-            
-            # Ask for confirmation unless dry-run
-            proceed = True
-            if not dry_run:
-                proceed = Confirm.ask(f"Extract pages {args.extract_pages}?", default=True)
-            
-            if proceed:
+    
+    # Extract enhanced arguments including conflict strategy
+    from pdf_manipulator.cli import extract_enhanced_args
+    enhanced_args = extract_enhanced_args(args)
+    
+    suppress_context = suppress_all_pdf_warnings() if not dry_run else None
+    
+    with suppress_context if suppress_context else _null_context():
+        for pdf_path, page_count, file_size in pdf_files:
+            try:
+                # Validate extraction for this PDF (early error detection)
+                from pdf_manipulator.core.parser import parse_page_range_from_args
+                pages_to_extract, desc, groups = parse_page_range_from_args(args, page_count, pdf_path)
+                
+                # Show extraction preview
+                if len(pages_to_extract) > 20:
+                    console.print(f"[blue]Would extract {len(pages_to_extract)} pages from {pdf_path.name}[/blue]")
+                else:
+                    page_list = ', '.join(str(p) for p in sorted(pages_to_extract)[:10])
+                    if len(pages_to_extract) > 10:
+                        page_list += f" ... ({len(pages_to_extract)} total)"
+                    console.print(f"[blue]Would extract pages: {page_list}[/blue]")
+                
+                # Ask user for confirmation
+                from rich.prompt import Confirm
+                proceed = Confirm.ask(f"Extract from {pdf_path.name}?", default=True)
+                
+                if not proceed:
+                    console.print(f"[dim]Skipped {pdf_path.name}[/dim]")
+                    continue
+                
+                # Determine extraction mode
+                extraction_mode = 'single'  # Default
+                if args.respect_groups:
+                    extraction_mode = 'grouped'
+                elif args.separate_files:
+                    extraction_mode = 'separate'
+                elif len(groups) > 1:
+                    from pdf_manipulator.ui import decide_extraction_mode
+                    extraction_mode = decide_extraction_mode(pages_to_extract, groups, True)
+                
                 if extraction_mode == 'separate':
                     # Extract as separate files
                     output_files = extract_pages_separate(
-                        pdf_path, args.extract_pages, patterns, template, source_page, dry_run
+                        pdf_path=pdf_path, 
+                        page_range=args.extract_pages, 
+                        patterns=patterns, 
+                        template=template, 
+                        source_page=source_page, 
+                        dry_run=dry_run, 
+                        dedup_strategy=enhanced_args['dedup_strategy'],
+                        use_timestamp=getattr(args, 'timestamp', False),
+                        custom_prefix=getattr(args, 'name_prefix', None),
+                        conflict_strategy=enhanced_args['conflict_strategy'],  # FIXED: Added this parameter
+                        interactive=enhanced_args['interactive']  # FIXED: Added this parameter
                     )
                     if output_files and not dry_run:
                         total_size = sum(size for _, size in output_files)
@@ -372,7 +374,17 @@ def process_interactive_extract(args: argparse.Namespace, pdf_files: list[tuple[
                 elif extraction_mode == 'grouped':
                     # Extract with groupings respected
                     output_files = extract_pages_grouped(
-                        pdf_path, args.extract_pages, patterns, template, source_page, dry_run
+                        pdf_path=pdf_path, 
+                        page_range=args.extract_pages, 
+                        patterns=patterns, 
+                        template=template, 
+                        source_page=source_page, 
+                        dry_run=dry_run, 
+                        dedup_strategy=enhanced_args['dedup_strategy'],
+                        use_timestamp=getattr(args, 'timestamp', False),
+                        custom_prefix=getattr(args, 'name_prefix', None),
+                        conflict_strategy=enhanced_args['conflict_strategy'],  # FIXED: Added this parameter
+                        interactive=enhanced_args['interactive']  # FIXED: Added this parameter
                     )
                     if output_files and not dry_run:
                         total_size = sum(size for _, size in output_files)
@@ -385,7 +397,17 @@ def process_interactive_extract(args: argparse.Namespace, pdf_files: list[tuple[
                 else:
                     # Extract as single document
                     output_path, new_size = extract_pages(
-                        pdf_path, args.extract_pages, patterns, template, source_page, dry_run
+                        pdf_path=pdf_path, 
+                        page_range=args.extract_pages, 
+                        patterns=patterns, 
+                        template=template, 
+                        source_page=source_page, 
+                        dry_run=dry_run, 
+                        dedup_strategy=enhanced_args['dedup_strategy'],
+                        use_timestamp=getattr(args, 'timestamp', False),
+                        custom_prefix=getattr(args, 'name_prefix', None),
+                        conflict_strategy=enhanced_args['conflict_strategy'],  # FIXED: Added this parameter
+                        interactive=enhanced_args['interactive']  # FIXED: Added this parameter
                     )
                     if output_path and not dry_run:
                         console.print(f"[green]✓ Created:[/green] {output_path.name} ({new_size:.2f} MB)")
@@ -396,8 +418,8 @@ def process_interactive_extract(args: argparse.Namespace, pdf_files: list[tuple[
                             output_path.rename(pdf_path)
                             console.print("[green]✓ Original file replaced[/green]")
 
-        except ValueError as e:
-            console.print(f"[yellow]Cannot extract from this PDF: {e}[/yellow]")
+            except ValueError as e:
+                console.print(f"[yellow]Cannot extract from this PDF: {e}[/yellow]")
 
 
 def _null_context():
