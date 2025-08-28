@@ -18,6 +18,7 @@ from rich.console import Console
 from pdf_manipulator.ui import *
 from pdf_manipulator.core.scanner import *
 from pdf_manipulator.core.operations import *
+from pdf_manipulator.core.operation_context import OpCtx, get_parsed_pages
 from pdf_manipulator.core.detailed_analysis import handle_detailed_analysis
 from pdf_manipulator.core.malformation_utils import ensure_pdf_ready_for_optimization
 
@@ -25,21 +26,42 @@ from pdf_manipulator.core.malformation_utils import ensure_pdf_ready_for_optimiz
 console = Console()
 
 
-def process_single_file_operations(args: argparse.Namespace, pdf_files: list[tuple[Path, int, float]]):
-    """Process operations on a single PDF file."""
+# def process_single_file_operations(args: argparse.Namespace, pdf_files: list[tuple[Path, int, float]]):
+#     """Process operations on a single PDF file."""
+#     if any([
+#         args.extract_pages,
+#         args.split_pages,
+#         args.optimize,
+#         args.analyze,
+#         args.analyze_detailed
+#         ]):
+#         pdf_path, page_count, file_size = pdf_files[0]
+#         process_single_pdf(pdf_path, page_count, file_size, args)
+#     else:
+#         # No operation specified - just show info
+#         from ..ui import show_single_file_help
+#         show_single_file_help(pdf_files[0][1])  # Pass page count
+
+
+def process_single_file_operations(*args, **kwargs):  # No parameters needed!
+    """Process operations on a single PDF file using OpCtx."""
+    # Accept and then discard incoming arguments from callers that haven't been 
+    # updated to use global context object.
+    args = None
+    kwargs = None
+
     if any([
-        args.extract_pages,
-        args.split_pages,
-        args.optimize,
-        args.analyze,
-        args.analyze_detailed
+        OpCtx.args.extract_pages,
+        OpCtx.args.split_pages,
+        OpCtx.args.optimize,
+        OpCtx.args.analyze,
+        OpCtx.args.analyze_detailed
         ]):
-        pdf_path, page_count, file_size = pdf_files[0]
-        process_single_pdf(pdf_path, page_count, file_size, args)
+        process_single_pdf()  # No parameters needed - uses OpCtx!
     else:
-        # No operation specified - just show info
+        # Show help - page count from OpCtx
         from ..ui import show_single_file_help
-        show_single_file_help(pdf_files[0][1])  # Pass page count
+        show_single_file_help(OpCtx.current_page_count)
 
 
 def process_single_file_mode(args: argparse.Namespace, pdf_files: list[tuple[Path, int, float]]):
@@ -121,9 +143,20 @@ def _show_pattern_preview(pdf_path: Path, patterns: list[str], template: str, so
         console.print(f"[yellow]Pattern preview failed: {e}[/yellow]")
 
 
-def process_single_pdf(pdf_path: Path, page_count: int, file_size: float,
-                        args: argparse.Namespace):
+# def process_single_pdf(pdf_path: Path, page_count: int, file_size: float,
+#                         args: argparse.Namespace):
+def process_single_pdf(*args, **kwargs):
     """Process a single PDF file based on the specified operation."""
+    
+    # Discard incoming parameters - use OpCtx instead
+    args = None
+    kwargs = None
+    
+    # Get everything from OpCtx 
+    pdf_path = OpCtx.current_pdf_path
+    page_count = OpCtx.current_page_count
+    file_size = OpCtx.current_pdf_path.stat().st_size / (1024 * 1024)  # Convert to MB
+    args = OpCtx.args
     
     # PHASE 2: Extract pattern and template arguments
     patterns, template, source_page = _extract_pattern_and_template_args(args)
@@ -174,6 +207,7 @@ def process_single_pdf(pdf_path: Path, page_count: int, file_size: float,
         try:
             from pdf_manipulator.core.parser import parse_page_range_from_args
             pages_to_extract, desc, groups = parse_page_range_from_args(args, page_count, pdf_path)
+            # pages_to_extract, desc, groups = get_parsed_pages()
 
             if len(pages_to_extract) == page_count:
                 console.print("[yellow]Extracting all pages - consider using --optimize instead[/yellow]")

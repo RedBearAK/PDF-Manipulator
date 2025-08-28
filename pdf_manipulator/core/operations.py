@@ -20,6 +20,7 @@ from pdf_manipulator.core.smart_filenames import (
     generate_extraction_filename,
     generate_smart_description
 )
+from pdf_manipulator.core.operation_context import OpCtx, get_cached_parsing_results, get_parsed_pages
 from pdf_manipulator.core.warning_suppression import suppress_pdf_warnings
 
 console = Console()
@@ -83,11 +84,12 @@ def get_ordered_pages_from_groups(groups: list, fallback_pages: set = None,
     return ordered_pages
 
 
-def extract_pages(pdf_path: Path, page_range: str, patterns: list[str] = None,
-                    template: str = None, source_page: int = 1,
-                    dry_run: bool = False, dedup_strategy: str = 'strict',
-                    use_timestamp: bool = False, custom_prefix: str = None,
-                    conflict_strategy: str = 'ask', interactive: bool = None) -> tuple[Path, float]:
+# def extract_pages(pdf_path: Path, page_range: str, patterns: list[str] = None,
+#                     template: str = None, source_page: int = 1,
+#                     dry_run: bool = False, dedup_strategy: str = 'strict',
+#                     use_timestamp: bool = False, custom_prefix: str = None,
+#                     conflict_strategy: str = 'ask', interactive: bool = None) -> tuple[Path, float]:
+def extract_pages(*args, **kwargs) -> tuple[Path, float]:
     """
     Extract specified pages with order preservation and enhanced deduplication.
     
@@ -107,6 +109,23 @@ def extract_pages(pdf_path: Path, page_range: str, patterns: list[str] = None,
     Returns:
         Tuple of (output_path, file_size) or (None, 0) if dry run or error
     """
+    # Discard incoming parameters - use OpCtx instead
+    args = None
+    kwargs = None
+    
+    # Get all parameters from OpCtx
+    pdf_path = OpCtx.current_pdf_path
+    page_range = OpCtx.get_page_range_arg()
+    patterns = OpCtx.patterns
+    template = OpCtx.template
+    source_page = OpCtx.source_page
+    dry_run = OpCtx.dry_run
+    dedup_strategy = OpCtx.dedup_strategy
+    use_timestamp = OpCtx.use_timestamp
+    custom_prefix = OpCtx.custom_prefix
+    conflict_strategy = OpCtx.conflict_strategy
+    interactive = OpCtx.interactive
+    
     # If interactive not explicitly set, infer it from conflict_strategy
     if interactive is None:
         interactive = conflict_strategy == 'ask'
@@ -175,15 +194,33 @@ def extract_pages(pdf_path: Path, page_range: str, patterns: list[str] = None,
         raise
 
 
-def extract_pages_grouped(pdf_path: Path, page_range: str, patterns: list[str] = None,
-                template: str = None, source_page: int = 1,
-                dry_run: bool = False, dedup_strategy: str = 'groups',
-                use_timestamp: bool = False, custom_prefix: str = None,
-                conflict_strategy: str = 'ask', interactive: bool = None) -> list[tuple[Path, float]]:
+# def extract_pages_grouped(pdf_path: Path, page_range: str, patterns: list[str] = None,
+#                 template: str = None, source_page: int = 1,
+#                 dry_run: bool = False, dedup_strategy: str = 'groups',
+#                 use_timestamp: bool = False, custom_prefix: str = None,
+#                 conflict_strategy: str = 'ask', interactive: bool = None) -> list[tuple[Path, float]]:
+def extract_pages_grouped(*args, **kwargs) -> list[tuple[Path, float]]:
     """
     Extract pages respecting original groupings with order preservation and deduplication.
     FIXED: Handle list/PageGroup object inconsistencies properly.
     """
+    
+    # Discard incoming parameters - use OpCtx instead
+    args = None
+    kwargs = None
+    
+    # Get all parameters from OpCtx
+    pdf_path = OpCtx.current_pdf_path
+    page_range = OpCtx.get_page_range_arg()
+    patterns = OpCtx.patterns
+    template = OpCtx.template
+    source_page = OpCtx.source_page
+    dry_run = OpCtx.dry_run
+    dedup_strategy = OpCtx.dedup_strategy
+    use_timestamp = OpCtx.use_timestamp
+    custom_prefix = OpCtx.custom_prefix
+    conflict_strategy = OpCtx.conflict_strategy
+    interactive = OpCtx.interactive
     
     # If interactive not explicitly set, infer it from conflict_strategy
     if interactive is None:
@@ -297,11 +334,12 @@ def extract_pages_grouped(pdf_path: Path, page_range: str, patterns: list[str] =
         return []
 
 
-def extract_pages_separate(pdf_path: Path, page_range: str, patterns: list[str] = None,
-                    template: str = None, source_page: int = 1,
-                    dry_run: bool = False, dedup_strategy: str = 'strict',
-                    use_timestamp: bool = False, custom_prefix: str = None,
-                    conflict_strategy: str = 'ask', interactive: bool = None) -> list[tuple[Path, float]]:
+# def extract_pages_separate(pdf_path: Path, page_range: str, patterns: list[str] = None,
+#                     template: str = None, source_page: int = 1,
+#                     dry_run: bool = False, dedup_strategy: str = 'strict',
+#                     use_timestamp: bool = False, custom_prefix: str = None,
+#                     conflict_strategy: str = 'ask', interactive: bool = None) -> list[tuple[Path, float]]:
+def extract_pages_separate(*args, **kwargs) -> list[tuple[Path, float]]:
     """
     Extract each page as a separate file with order preservation and deduplication.
     
@@ -321,6 +359,23 @@ def extract_pages_separate(pdf_path: Path, page_range: str, patterns: list[str] 
     Returns:
         List of (output_path, file_size) tuples for each created page file
     """
+    # Discard incoming parameters - use OpCtx instead
+    args = None
+    kwargs = None
+    
+    # Get all parameters from OpCtx
+    pdf_path = OpCtx.current_pdf_path
+    page_range = OpCtx.get_page_range_arg()
+    patterns = OpCtx.patterns
+    template = OpCtx.template
+    source_page = OpCtx.source_page
+    dry_run = OpCtx.dry_run
+    dedup_strategy = OpCtx.dedup_strategy
+    use_timestamp = OpCtx.use_timestamp
+    custom_prefix = OpCtx.custom_prefix
+    conflict_strategy = OpCtx.conflict_strategy
+    interactive = OpCtx.interactive
+    
     # If interactive not explicitly set, infer it from conflict_strategy
     if interactive is None:
         interactive = conflict_strategy == 'ask'

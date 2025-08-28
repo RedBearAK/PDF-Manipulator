@@ -16,6 +16,7 @@ from pdf_manipulator.core.operations import (
     extract_pages_separate,
     extract_pages_grouped
 )
+from pdf_manipulator.core.operation_context import OpCtx
 from pdf_manipulator.core.folder_operations import (
     handle_folder_operations,
     _extract_pattern_and_template_args
@@ -412,6 +413,10 @@ def main():
 
     args = parser.parse_args()
 
+    # Set up OperationContext immediately after argument parsing
+    OpCtx.reset()           # Clear any previous state
+    OpCtx.set_args(args)    # Set the arguments cache, they won't change
+
     # Handle --strip-first as alias for --extract-pages=1
     if args.strip_first:
         if args.extract_pages:
@@ -523,6 +528,11 @@ def main():
         pdf_files = check_and_fix_malformation_early(pdf_files, args)
         
         display_pdf_table(pdf_files, title="PDF File Assessment")
+
+        # Extract PDF info and set current PDF context globally
+        pdf_path, page_count, file_size = pdf_files[0]
+        OpCtx.set_current_pdf(pdf_path, page_count)
+
         process_single_file_operations(args, pdf_files)
     else:
         console.print(f"[blue]Scanning {args.path.absolute()}...[/blue]\n")

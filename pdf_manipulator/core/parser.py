@@ -7,19 +7,27 @@ All existing call sites continue to work unchanged.
 """
 
 from pathlib import Path
+from rich.console import Console
 
 from pdf_manipulator.core.page_range.utils import sanitize_filename
 from pdf_manipulator.core.page_range.boolean import (
     looks_like_boolean_expression,
     evaluate_boolean_expression_with_groups
 )
+from pdf_manipulator.core.operation_context import OpCtx
 from pdf_manipulator.core.page_range.page_range_parser import PageRangeParser, PageGroup
 
+console = Console()
 
-def parse_page_range(range_str: str, total_pages: int, pdf_path: Path = None,
-                    filter_matches: str = None, group_start: str = None, 
-                    group_end: str = None) -> tuple[set[int], str, list[PageGroup]]:
+
+# def parse_page_range(range_str: str, total_pages: int, pdf_path: Path = None,
+#                     filter_matches: str = None, group_start: str = None, 
+#                     group_end: str = None) -> tuple[set[int], str, list[PageGroup]]:
+
+def parse_page_range(*args, **kwargs):
     """
+    Parse page range using OpCtx - parameters ignored for backward compatibility.
+
     Parse page range string and return set of page numbers (1-indexed), description, and groupings.
 
     Enhanced version that supports advanced filtering and boundary detection:
@@ -82,17 +90,51 @@ def parse_page_range(range_str: str, total_pages: int, pdf_path: Path = None,
     - Boundary detection: group_start="contains:'Chapter'", group_end="contains:'Summary'"
     """
     
+    # # Check if any advanced features are requested
+    # has_advanced_features = any([filter_matches, group_start, group_end])
+    
+    # if has_advanced_features:
+    #     # Use advanced pipeline
+    #     return _parse_with_advanced_pipeline(
+    #         range_str, total_pages, pdf_path, filter_matches, group_start, group_end
+    #     )
+    # else:
+    #     # Use original logic (for backward compatibility and performance)
+    #     return _parse_original_logic(range_str, total_pages, pdf_path)
+    
+    # Discard incoming parameters
+    args = None
+    kwargs = None
+    
+    # Check if we already have results
+    if OpCtx.has_parsed_results():
+        console.print("✨ Using cached parsing results")
+        cached = OpCtx.get_cached_parsing_results()
+        return cached.selected_pages, cached.range_description, cached.page_groups
+    
+    # Get all parameters from OpCtx
+    range_str = OpCtx.get_page_range_arg()
+    total_pages = OpCtx.current_page_count
+    pdf_path = OpCtx.current_pdf_path
+    filter_matches = getattr(OpCtx.args, 'filter_matches', None)
+    group_start = getattr(OpCtx.args, 'group_start', None)
+    group_end = getattr(OpCtx.args, 'group_end', None)
+    
     # Check if any advanced features are requested
     has_advanced_features = any([filter_matches, group_start, group_end])
     
     if has_advanced_features:
         # Use advanced pipeline
-        return _parse_with_advanced_pipeline(
+        selected_pages, range_description, page_groups = _parse_with_advanced_pipeline(
             range_str, total_pages, pdf_path, filter_matches, group_start, group_end
         )
     else:
-        # Use original logic (for backward compatibility and performance)
-        return _parse_original_logic(range_str, total_pages, pdf_path)
+        # Use original logic
+        selected_pages, range_description, page_groups = _parse_original_logic(range_str, total_pages, pdf_path)
+    
+    # Store results in OpCtx and return
+    OpCtx.store_parsed_results(selected_pages, range_description, page_groups)
+    return selected_pages, range_description, page_groups
 
 
 def _parse_original_logic(range_str: str, total_pages: int, pdf_path: Path = None) -> tuple[set[int], str, list[PageGroup]]:
@@ -321,20 +363,46 @@ def _create_advanced_description(initial_desc: str, filter_matches: str,
     return result
 
 
-# Convenience function for CLI integration
-def parse_page_range_from_args(args, total_pages: int, 
-                                pdf_path: Path) -> tuple[set[int], str, list[PageGroup]]:
-    """
-    Convenience function to parse page range from argparse args object.
+# # Convenience function for CLI integration
+# def parse_page_range_from_args(args, total_pages: int, 
+#                                 pdf_path: Path) -> tuple[set[int], str, list[PageGroup]]:
+#     """
+#     Convenience function to parse page range from argparse args object.
     
-    Automatically extracts the advanced options from args and passes them through.
-    """
+#     Automatically extracts the advanced options from args and passes them through.
+#     """
     
-    return parse_page_range(
-        range_str=args.extract_pages,
-        total_pages=total_pages,
-        pdf_path=pdf_path,
-        filter_matches=getattr(args, 'filter_matches', None),
-        group_start=getattr(args, 'group_start', None),
-        group_end=getattr(args, 'group_end', None)
+#     return parse_page_range(
+#         range_str=args.extract_pages,
+#         total_pages=total_pages,
+#         pdf_path=pdf_path,
+#         filter_matches=getattr(args, 'filter_matches', None),
+#         group_start=getattr(args, 'group_start', None),
+#         group_end=getattr(args, 'group_end', None)
+#     )
+
+
+def parse_page_range_from_args(*args, **kwargs):
+    # Discard parameters
+    args = None
+    kwargs = None
+    
+    # Check if we already have results
+    cached = OpCtx.get_cached_parsing_results()
+    if cached:
+        console.print("✨ Using cached parsing results")
+        return cached.selected_pages, cached.range_description, cached.page_groups
+    
+    # No results yet - parse using OpCtx args
+    selected_pages, range_description, page_groups = parse_page_range(
+        OpCtx.get_page_range_arg(),
+        OpCtx.current_page_count,
+        OpCtx.current_pdf_path,
+        getattr(OpCtx.args, 'filter_matches', None),
+        getattr(OpCtx.args, 'group_start', None),
+        getattr(OpCtx.args, 'group_end', None)
     )
+    
+    # Store and return
+    OpCtx.store_parsed_results(selected_pages, range_description, page_groups)
+    return selected_pages, range_description, page_groups
