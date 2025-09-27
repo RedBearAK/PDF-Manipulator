@@ -26,6 +26,7 @@ from pdf_manipulator.core.operations import (
     extract_pages_separate,
     split_to_pages,
 )
+from pdf_manipulator.core.operation_context import OpCtx
 from pdf_manipulator.core.malformation_utils import check_and_fix_malformation_with_args
 from pdf_manipulator.core.warning_suppression import suppress_all_pdf_warnings
 
@@ -209,6 +210,10 @@ def process_batch_extract(args: argparse.Namespace, pdf_files: list[tuple[Path, 
         # For extract, process all PDFs (not just multi-page)
         for pdf_path, page_count, file_size in pdf_files:
             console.print(f"\n[cyan]Processing {pdf_path.name}[/cyan]...")
+
+            # CRITICAL: Set PDF context BEFORE any parsing operations
+            OpCtx.set_current_pdf(pdf_path, page_count)
+
             try:
                 # Validate extraction for this PDF (early error detection)
                 from pdf_manipulator.core.parser import parse_page_range_from_args
@@ -294,6 +299,10 @@ def process_batch_split(args: argparse.Namespace, pdf_files: list[tuple[Path, in
         multi_page_pdfs = [(p, c, s) for p, c, s in pdf_files if c > 1]
         for pdf_path, page_count, file_size in multi_page_pdfs:
             console.print(f"\n[cyan]Processing {pdf_path.name}[/cyan]...")
+
+            # CRITICAL: Set PDF context for consistency (though split doesn't use parsing)
+            OpCtx.set_current_pdf(pdf_path, page_count)
+
             output_files = split_to_pages(pdf_path, dry_run)
             if output_files and not dry_run:
                 console.print(f"[green]✓ Split into {len(output_files)} files[/green]")
@@ -320,6 +329,10 @@ def process_interactive_extract(args: argparse.Namespace, pdf_files: list[tuple[
                 from pdf_manipulator.core.parser import parse_page_range_from_args
                 pages_to_extract, desc, groups = parse_page_range_from_args(args, page_count, pdf_path)
                 
+
+                # CRITICAL: Set PDF context BEFORE any parsing operations
+                OpCtx.set_current_pdf(pdf_path, page_count)
+
                 # Show extraction preview
                 if len(pages_to_extract) > 20:
                     console.print(f"[blue]Would extract {len(pages_to_extract)} pages from {pdf_path.name}[/blue]")

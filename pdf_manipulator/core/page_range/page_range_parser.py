@@ -23,6 +23,8 @@ from rich.console import Console
 from pdf_manipulator.core.page_range.utils import (
     create_pattern_description, create_boolean_description, sanitize_filename)
 
+from pdf_manipulator.core.operation_context import OpCtx
+
 from pdf_manipulator.core.page_range.patterns import (
     parse_pattern_expression,
     split_comma_respecting_quotes
@@ -57,6 +59,20 @@ class PageRangeParser:
     """
     
     def __init__(self, total_pages: int, pdf_path: Path = None):
+
+        # DEFENSIVE GUARD: Validate total_pages is not None
+        if total_pages is None:
+            raise ValueError(
+                "'total_pages' cannot be None. "
+                "This usually means OpCtx.set_current_pdf() was not called "
+                "before creating the parser. Check batch processing logic."
+            )
+        
+        if not isinstance(total_pages, int) or total_pages < 1:
+            raise ValueError(
+                f"total_pages must be a positive integer, got: {total_pages}"
+            )
+
         self.total_pages = total_pages
         self.pdf_path = pdf_path
         
