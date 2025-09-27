@@ -112,6 +112,15 @@ def parse_page_range(*args, **kwargs):
         cached = OpCtx.get_cached_parsing_results()
         return cached.selected_pages, cached.range_description, cached.page_groups
     
+
+    # DEFENSIVE GUARD: Validate OpCtx state before proceeding
+    if not OpCtx.current_pdf_path or not OpCtx.current_page_count:
+        raise RuntimeError(
+            "PDF context not initialized. "
+            "Call OpCtx.set_current_pdf(pdf_path, page_count) before parsing. "
+            "This is a bug in the batch processing logic."
+        )
+
     # Get all parameters from OpCtx
     range_str = OpCtx.get_page_range_arg()
     total_pages = OpCtx.current_page_count
