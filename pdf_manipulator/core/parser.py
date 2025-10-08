@@ -1,6 +1,6 @@
 """
 Enhanced parse_page_range function with advanced filtering and boundary detection.
-Replace: pdf_manipulator/core/parser.py
+File: pdf_manipulator/core/parser.py
 
 This maintains backward compatibility while adding advanced features.
 All existing call sites continue to work unchanged.
@@ -16,13 +16,11 @@ from pdf_manipulator.core.page_range.boolean import (
 )
 from pdf_manipulator.core.operation_context import OpCtx
 from pdf_manipulator.core.page_range.page_range_parser import PageRangeParser, PageGroup
+from pdf_manipulator.core.page_range.boundary_detection import apply_boundary_detection
+
 
 console = Console()
 
-
-# def parse_page_range(range_str: str, total_pages: int, pdf_path: Path = None,
-#                     filter_matches: str = None, group_start: str = None, 
-#                     group_end: str = None) -> tuple[set[int], str, list[PageGroup]]:
 
 def parse_page_range(*args, **kwargs):
     """
@@ -89,18 +87,6 @@ def parse_page_range(*args, **kwargs):
     - Group filtering: filter_matches="1,3,4" or filter_matches="contains:'Important'"
     - Boundary detection: group_start="contains:'Chapter'", group_end="contains:'Summary'"
     """
-    
-    # # Check if any advanced features are requested
-    # has_advanced_features = any([filter_matches, group_start, group_end])
-    
-    # if has_advanced_features:
-    #     # Use advanced pipeline
-    #     return _parse_with_advanced_pipeline(
-    #         range_str, total_pages, pdf_path, filter_matches, group_start, group_end
-    #     )
-    # else:
-    #     # Use original logic (for backward compatibility and performance)
-    #     return _parse_original_logic(range_str, total_pages, pdf_path)
     
     # Discard incoming parameters
     args = None
@@ -243,98 +229,19 @@ def _create_boolean_description(range_str: str, num_groups: int) -> str:
 
 def _apply_boundary_detection(groups: list[PageGroup], start_pattern: str, end_pattern: str,
                                 pdf_path: Path, total_pages: int) -> list[PageGroup]:
-    """Apply boundary detection to split/merge groups at pattern boundaries."""
+    """
+    Apply boundary detection to split/merge groups at pattern boundaries.
+    
+    Delegates to the boundary_detection module to avoid code duplication.
+    """
     
     if not start_pattern and not end_pattern:
         return groups
     
-    # Import here to avoid circular dependencies
-    from pdf_manipulator.core.page_range.patterns import parse_pattern_expression
+    # # Import here to avoid circular dependency
+    # from pdf_manipulator.core.page_range.boundary_detection import apply_boundary_detection
     
-    # Find boundary pages
-    start_pages = set()
-    if start_pattern:
-        try:
-            start_pages = set(parse_pattern_expression(start_pattern, pdf_path, total_pages))
-        except ValueError as e:
-            raise ValueError(f"Invalid start boundary pattern: {e}")
-    
-    end_pages = set()
-    if end_pattern:
-        try:
-            end_pages = set(parse_pattern_expression(end_pattern, pdf_path, total_pages))
-        except ValueError as e:
-            raise ValueError(f"Invalid end boundary pattern: {e}")
-    
-    # Split each group at boundary points
-    new_groups = []
-    for group in groups:
-        new_groups.extend(_split_group_at_boundaries(group, start_pages, end_pages))
-    
-    return new_groups
-
-
-def _split_group_at_boundaries(group: PageGroup, start_pages: set[int], 
-                                end_pages: set[int]) -> list[PageGroup]:
-    """Split a single group at boundary points."""
-    
-    if not group.pages:
-        return [group]
-    
-    # Sort pages to process sequentially
-    sorted_pages = sorted(group.pages)
-    groups = []
-    current_group_pages = []
-    
-    for page in sorted_pages:
-        # Check if this page ends the current group
-        if page in end_pages and current_group_pages:
-            # End current group (inclusive - include the end page)
-            current_group_pages.append(page)
-            groups.append(_create_boundary_group(current_group_pages, group.original_spec))
-            current_group_pages = []
-            continue
-        
-        # Check if this page starts a new group
-        if page in start_pages:
-            # Start new group (finish current group first if it has pages)
-            if current_group_pages:
-                groups.append(_create_boundary_group(current_group_pages, group.original_spec))
-                current_group_pages = []
-            # Start new group with this page
-            current_group_pages = [page]
-        else:
-            # Regular page - add to current group
-            current_group_pages.append(page)
-    
-    # Don't forget the final group
-    if current_group_pages:
-        groups.append(_create_boundary_group(current_group_pages, group.original_spec))
-    
-    return groups if groups else [group]  # Return original if no splits occurred
-
-
-def _create_boundary_group(pages: list[int], original_spec: str) -> PageGroup:
-    """Create a PageGroup from boundary-split pages."""
-    
-    if not pages:
-        return PageGroup([], False, original_spec)
-    
-    if len(pages) == 1:
-        return PageGroup(pages, False, f"page{pages[0]}")
-    else:
-        # Check if consecutive
-        sorted_pages = sorted(pages)
-        is_consecutive = all(
-                    sorted_pages[i] == sorted_pages[i-1] + 1 for i in range(1, len(sorted_pages)))
-        
-        if is_consecutive:
-            spec = f"pages{sorted_pages[0]}-{sorted_pages[-1]}"
-            return PageGroup(pages, True, spec)
-        else:
-            # Non-consecutive - create a grouped spec
-            spec = f"pages{','.join(map(str, sorted(pages)))}"
-            return PageGroup(pages, True, spec)
+    return apply_boundary_detection(groups, start_pattern, end_pattern, pdf_path, total_pages)
 
 
 def _create_advanced_description(initial_desc: str, filter_matches: str, 
@@ -372,26 +279,11 @@ def _create_advanced_description(initial_desc: str, filter_matches: str,
     return result
 
 
-# # Convenience function for CLI integration
-# def parse_page_range_from_args(args, total_pages: int, 
-#                                 pdf_path: Path) -> tuple[set[int], str, list[PageGroup]]:
-#     """
-#     Convenience function to parse page range from argparse args object.
-    
-#     Automatically extracts the advanced options from args and passes them through.
-#     """
-    
-#     return parse_page_range(
-#         range_str=args.extract_pages,
-#         total_pages=total_pages,
-#         pdf_path=pdf_path,
-#         filter_matches=getattr(args, 'filter_matches', None),
-#         group_start=getattr(args, 'group_start', None),
-#         group_end=getattr(args, 'group_end', None)
-#     )
-
-
 def parse_page_range_from_args(*args, **kwargs):
+    """
+    Convenience wrapper for backward compatibility.
+    Just delegates to parse_page_range().
+    """
     # Discard parameters
     args = None
     kwargs = None
@@ -415,3 +307,6 @@ def parse_page_range_from_args(*args, **kwargs):
     # Store and return
     OpCtx.store_parsed_results(selected_pages, range_description, page_groups)
     return selected_pages, range_description, page_groups
+
+
+# End of file #
