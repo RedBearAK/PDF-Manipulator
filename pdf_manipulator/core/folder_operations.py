@@ -325,13 +325,13 @@ def process_interactive_extract(args: argparse.Namespace, pdf_files: list[tuple[
     with suppress_context if suppress_context else _null_context():
         for pdf_path, page_count, file_size in pdf_files:
             try:
+                # CRITICAL: Set PDF context BEFORE any parsing operations
+                OpCtx.set_current_pdf(pdf_path, page_count)
+
                 # Validate extraction for this PDF (early error detection)
                 from pdf_manipulator.core.parser import parse_page_range_from_args
                 pages_to_extract, desc, groups = parse_page_range_from_args(args, page_count, pdf_path)
                 
-
-                # CRITICAL: Set PDF context BEFORE any parsing operations
-                OpCtx.set_current_pdf(pdf_path, page_count)
 
                 # Show extraction preview
                 if len(pages_to_extract) > 20:

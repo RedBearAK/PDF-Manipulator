@@ -199,6 +199,9 @@ class OperationContext:
         
         cls.current_pdf_path = pdf_path
         cls.current_page_count = page_count
+
+        # CRITICAL: Clear cached parsing results when switching PDFs
+        cls.parsed_results = None
     
     @classmethod
     def get_page_range_arg(cls):

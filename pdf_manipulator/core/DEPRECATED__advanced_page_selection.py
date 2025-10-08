@@ -1,6 +1,7 @@
+# pdf_manipulator/core/advanced_page_selection.py
+
 """
 Advanced page selection pipeline integrating all filtering and boundary options.
-Create: pdf_manipulator/core/advanced_page_selection.py
 
 Coordinates: page range parsing → boundary detection → group filtering
 """
@@ -16,6 +17,7 @@ from pdf_manipulator.core.page_range.group_filtering import (
     describe_filter_result,
     preview_group_filtering
 )
+
 
 console = Console()
 
@@ -120,7 +122,7 @@ def apply_boundary_detection(groups: list[PageGroup], start_pattern: str, end_pa
     """
     Apply boundary detection to split/merge groups at pattern boundaries.
     
-    This is an updated version of the boundary detection logic.
+    This is the CANONICAL implementation - parser.py should import this.
     """
     
     if not start_pattern and not end_pattern:
@@ -149,14 +151,24 @@ def apply_boundary_detection(groups: list[PageGroup], start_pattern: str, end_pa
     # Split each group at boundary points
     new_groups = []
     for group in groups:
-        new_groups.extend(_split_group_at_boundaries(group, start_pages, end_pages))
+        split_results = _split_group_at_boundaries(group, start_pages, end_pages)
+        # Guard: Filter out any empty groups (should never happen, but safety check)
+        new_groups.extend([g for g in split_results if g.pages])
     
     return new_groups
 
 
 def _split_group_at_boundaries(group: PageGroup, start_pages: set[int], 
                                 end_pages: set[int]) -> list[PageGroup]:
-    """Split a single group at boundary points."""
+    """
+    Split a single group at boundary points.
+    
+    FIXED LOGIC - Correctly handles all cases:
+    - Page is both start AND end (single-page group)
+    - Consecutive boundaries (each becomes single-page group)
+    - First/last pages as boundaries
+    - Regular boundaries with content between them
+    """
     
     if not group.pages:
         return [group]
@@ -167,36 +179,49 @@ def _split_group_at_boundaries(group: PageGroup, start_pages: set[int],
     current_group_pages = []
     
     for page in sorted_pages:
-        # Check if this page ends the current group
-        if page in end_pages and current_group_pages:
-            # End current group (inclusive - include the end page)
-            current_group_pages.append(page)
-            groups.append(_create_boundary_group(current_group_pages, group.original_spec))
-            current_group_pages = []
-            continue
+        is_start = page in start_pages
+        is_end = page in end_pages
         
-        # Check if this page starts a new group
-        if page in start_pages:
-            # Start new group (finish current group first if it has pages)
+        # Case 1: Page is BOTH start and end - it's its own single-page group
+        if is_start and is_end:
+            # Close any previous group first
             if current_group_pages:
                 groups.append(_create_boundary_group(current_group_pages, group.original_spec))
-                current_group_pages = []
+            # Create single-page group for this boundary page
+            groups.append(_create_boundary_group([page], group.original_spec))
+            current_group_pages = []
+            
+        # Case 2: Page ends the current group (inclusive)
+        elif is_end:
+            current_group_pages.append(page)
+            # Close the group (will always have at least this page)
+            groups.append(_create_boundary_group(current_group_pages, group.original_spec))
+            current_group_pages = []
+            
+        # Case 3: Page starts a new group
+        elif is_start:
+            # Close any previous group first
+            if current_group_pages:
+                groups.append(_create_boundary_group(current_group_pages, group.original_spec))
             # Start new group with this page
             current_group_pages = [page]
+            
+        # Case 4: Regular page - add to current group
         else:
-            # Regular page - add to current group
             current_group_pages.append(page)
     
     # Don't forget the final group
     if current_group_pages:
         groups.append(_create_boundary_group(current_group_pages, group.original_spec))
     
-    return groups if groups else [group]  # Return original if no splits occurred
+    # Guard: Should never return empty list, but safety check
+    return groups if groups else [group]
 
 
 def _create_boundary_group(pages: list[int], original_spec: str) -> PageGroup:
     """Create a PageGroup from boundary-split pages."""
     
+    # Guard against empty pages
     if not pages:
         return PageGroup([], False, original_spec)
     
@@ -303,3 +328,6 @@ def validate_advanced_selection_args(args: argparse.Namespace) -> tuple[bool, st
             return False, f"Invalid filter syntax: {error_msg}"
     
     return True, ""
+
+
+# End of file #
