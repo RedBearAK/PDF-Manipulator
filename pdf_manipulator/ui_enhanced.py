@@ -143,10 +143,58 @@ def prompt_base_filename(default_base: str, group_count: int, argument_summary: 
         return new_base
 
 
+def format_page_ranges(pages: set[int]) -> str:
+    """
+    Format page numbers into compact range notation.
+    
+    Args:
+        pages: Set of page numbers
+        
+    Returns:
+        String like "1-3, 5, 7-9, 15"
+        
+    Examples:
+        >>> format_page_ranges({1, 2, 3, 5, 7, 8, 9})
+        '1-3, 5, 7-9'
+        >>> format_page_ranges({1})
+        '1'
+        >>> format_page_ranges(set())
+        'none'
+    """
+    if not pages:
+        return "none"
+    
+    sorted_pages = sorted(pages)
+    ranges = []
+    start = sorted_pages[0]
+    end = start
+    
+    for page in sorted_pages[1:]:
+        if page == end + 1:
+            end = page
+        else:
+            if start == end:
+                ranges.append(str(start))
+            else:
+                ranges.append(f"{start}-{end}")
+            start = page
+            end = page
+    
+    # Add final range
+    if start == end:
+        ranges.append(str(start))
+    else:
+        ranges.append(f"{start}-{end}")
+    
+    return ", ".join(ranges)
+
+
 def show_extraction_preview(pdf_path: Path, pages_to_extract: set, groups: list, 
-                           extraction_mode: str, output_paths: list[Path]) -> bool:
+                            extraction_mode: str, output_paths: list[Path]) -> bool:
     """
     Show comprehensive preview of extraction operation.
+    
+    UPDATED: Now shows total pages, extracted count, and unmatched pages.
     
     Args:
         pdf_path: Source PDF file
@@ -158,11 +206,24 @@ def show_extraction_preview(pdf_path: Path, pages_to_extract: set, groups: list,
     Returns:
         True if user confirms, False if cancelled
     """
+    from pdf_manipulator.core.operation_context import OpCtx
+    
     console.print("\n[cyan]📋 Extraction Preview[/cyan]")
     
-    # Source info
+    # Source info with total pages from OpCtx
+    total_pages = OpCtx.current_page_count
     console.print(f"[bold]Source:[/bold] {pdf_path.name}")
-    console.print(f"[bold]Pages to extract:[/bold] {len(pages_to_extract)} pages")
+    console.print(f"[bold]Total pages in PDF:[/bold] {total_pages}")
+    console.print(f"[bold]Pages to extract:[/bold] {len(pages_to_extract)}")
+    console.print(f"[bold]Pages NOT extracted:[/bold] {total_pages - len(pages_to_extract)}")
+    
+    # Show unmatched pages if any exist
+    if len(pages_to_extract) < total_pages:
+        all_pages = set(range(1, total_pages + 1))
+        unmatched_pages = all_pages - pages_to_extract
+        unmatched_formatted = format_page_ranges(unmatched_pages)
+        console.print(f"[dim]Pages not selected: {unmatched_formatted}[/dim]")
+    
     console.print(f"[bold]Mode:[/bold] {extraction_mode}")
     
     # Group breakdown
@@ -187,6 +248,69 @@ def show_extraction_preview(pdf_path: Path, pages_to_extract: set, groups: list,
         console.print(f"\n[dim]Estimated total size: ~{estimated_size:.1f} MB[/dim]")
     
     return Confirm.ask("\nProceed with extraction?", default=True)
+
+
+def show_page_selection_preview(pages_to_extract: set[int], total_pages: int = None) -> None:
+    """
+    Show preview of page selection before extraction.
+    
+    Displays which pages will be extracted and which won't be,
+    providing confirmation of the selection criteria.
+    
+    Args:
+        pages_to_extract: Set of page numbers that will be extracted
+        total_pages: Total pages in PDF (if None, gets from OpCtx)
+    """
+    from pdf_manipulator.core.operation_context import OpCtx
+    
+    # Get total pages from OpCtx if not provided
+    if total_pages is None:
+        total_pages = OpCtx.current_page_count
+    
+    # Show formatted page list
+    page_list = format_page_ranges(pages_to_extract)
+    console.print(f"[blue]Would extract pages: {page_list}[/blue]")
+    
+    # Show unmatched pages info
+    unextracted_count = total_pages - len(pages_to_extract)
+    if unextracted_count > 0:
+        all_pages = set(range(1, total_pages + 1))
+        unmatched_pages = all_pages - pages_to_extract
+        unmatched_formatted = format_page_ranges(unmatched_pages)
+        console.print(f"[dim]Pages not selected: {unmatched_formatted}[/dim]")
+    else:
+        console.print(f"[dim]All {total_pages} pages selected[/dim]")
+
+
+def show_extraction_summary(pages_extracted: set[int], total_pages: int = None) -> None:
+    """
+    Show summary after extraction completes.
+    
+    Displays total pages, extracted count, and pages that were not extracted.
+    Only shows this information if there are unextracted pages.
+    
+    Args:
+        pages_extracted: Set of page numbers that were extracted
+        total_pages: Total pages in PDF (if None, gets from OpCtx)
+    """
+    from pdf_manipulator.core.operation_context import OpCtx
+    
+    # Get total pages from OpCtx if not provided
+    if total_pages is None:
+        total_pages = OpCtx.current_page_count
+    
+    unextracted_count = total_pages - len(pages_extracted)
+    
+    # # Only show summary if there are unextracted pages
+    # if unextracted_count > 0:
+    all_pages = set(range(1, total_pages + 1))
+    unmatched_pages = all_pages - pages_extracted
+    unmatched_formatted = format_page_ranges(unmatched_pages)
+    
+    console.print(f"\n[dim]Extraction summary:[/dim]")
+    console.print(f"[dim]  Total pages: {total_pages}[/dim]")
+    console.print(f"[dim]  Extracted: {len(pages_extracted)}[/dim]")
+    console.print(f"[dim]  Not extracted: {unextracted_count} ({unmatched_formatted})[/dim]")
 
 
 def show_conflict_resolution_summary(conflicts: list[Path], resolution_strategy: str) -> None:

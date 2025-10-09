@@ -29,7 +29,7 @@ from pdf_manipulator.core.operations import (
 from pdf_manipulator.core.operation_context import OpCtx
 from pdf_manipulator.core.malformation_utils import check_and_fix_malformation_with_args
 from pdf_manipulator.core.warning_suppression import suppress_all_pdf_warnings
-
+from pdf_manipulator.ui_enhanced import format_page_ranges, show_page_selection_preview
 
 console = Console()
 
@@ -327,20 +327,17 @@ def process_interactive_extract(args: argparse.Namespace, pdf_files: list[tuple[
             try:
                 # CRITICAL: Set PDF context BEFORE any parsing operations
                 OpCtx.set_current_pdf(pdf_path, page_count)
-
+                
                 # Validate extraction for this PDF (early error detection)
                 from pdf_manipulator.core.parser import parse_page_range_from_args
                 pages_to_extract, desc, groups = parse_page_range_from_args(args, page_count, pdf_path)
                 
+                # # Show extraction preview
+                # page_list = format_page_ranges(pages_to_extract)
+                # console.print(f"[blue]Would extract pages: {page_list}[/blue]")
 
-                # Show extraction preview
-                if len(pages_to_extract) > 20:
-                    console.print(f"[blue]Would extract {len(pages_to_extract)} pages from {pdf_path.name}[/blue]")
-                else:
-                    page_list = ', '.join(str(p) for p in sorted(pages_to_extract)[:10])
-                    if len(pages_to_extract) > 10:
-                        page_list += f" ... ({len(pages_to_extract)} total)"
-                    console.print(f"[blue]Would extract pages: {page_list}[/blue]")
+                # Show unmatched pages info
+                show_page_selection_preview(pages_to_extract, page_count)
                 
                 # Ask user for confirmation
                 from rich.prompt import Confirm
