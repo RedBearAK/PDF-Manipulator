@@ -8,7 +8,6 @@ Key changes:
 - Maintain backward compatibility for existing functionality
 """
 
-import time
 from pathlib import Path
 from rich.console import Console
 
@@ -22,6 +21,7 @@ from pdf_manipulator.core.smart_filenames import (
 )
 from pdf_manipulator.core.operation_context import OpCtx, get_cached_parsing_results, get_parsed_pages
 from pdf_manipulator.core.warning_suppression import suppress_pdf_warnings
+from pdf_manipulator.ui_enhanced import show_extraction_summary
 
 console = Console()
 
@@ -184,6 +184,9 @@ def extract_pages(*args, **kwargs) -> tuple[Path, float]:
         else:
             console.print(f"[green]✓ Extracted {len(ordered_pages)} pages: {', '.join(map(str, ordered_pages))}[/green]")
         
+        # Show extraction summary (unmatched pages)
+        show_extraction_summary(pages_to_extract)
+        
         return output_path, file_size
 
     except ValueError as e:
@@ -324,6 +327,14 @@ def extract_pages_grouped(*args, **kwargs) -> list[tuple[Path, float]]:
             else:
                 console.print(f"[green]✓ Group {group_idx+1}: {len(group_pages)} pages[/green]")
         
+        # Show extraction summary (unmatched pages)
+        if not dry_run and output_files:
+            all_extracted_pages = set()
+            for group in groups:
+                if hasattr(group, 'pages'):
+                    all_extracted_pages.update(group.pages)
+            show_extraction_summary(all_extracted_pages)
+        
         return output_files
 
     except ValueError as e:
@@ -436,6 +447,8 @@ def extract_pages_separate(*args, **kwargs) -> list[tuple[Path, float]]:
         
         if not dry_run and output_files:
             console.print(f"[green]✓ Created {len(output_files)} separate files[/green]")
+            # Show extraction summary (unmatched pages)
+            show_extraction_summary(pages_to_extract)
         
         return output_files
 

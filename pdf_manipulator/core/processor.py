@@ -16,6 +16,7 @@ from rich.prompt import Confirm
 from rich.console import Console
 
 from pdf_manipulator.ui import *
+from pdf_manipulator.ui_enhanced import show_page_selection_preview
 from pdf_manipulator.core.scanner import *
 from pdf_manipulator.core.operations import *
 from pdf_manipulator.core.operation_context import OpCtx, get_parsed_pages
@@ -221,6 +222,9 @@ def process_single_pdf(*args, **kwargs):
                 extraction_mode = decide_extraction_mode(pages_to_extract, groups, True)
             else:
                 extraction_mode = 'single'
+
+            # Show page selection preview
+            show_page_selection_preview(pages_to_extract, page_count)
 
             # Ask for confirmation unless in batch or dry-run mode
             proceed = True
