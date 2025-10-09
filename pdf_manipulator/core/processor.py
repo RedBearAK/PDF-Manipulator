@@ -213,6 +213,9 @@ def process_single_pdf(*args, **kwargs):
             if len(pages_to_extract) == page_count:
                 console.print("[yellow]Extracting all pages - consider using --optimize instead[/yellow]")
 
+            # Show page selection preview (before asking about extraction mode)
+            show_page_selection_preview(pages_to_extract, page_count)
+
             # Determine extraction mode
             if args.respect_groups:
                 extraction_mode = 'grouped'
@@ -222,9 +225,6 @@ def process_single_pdf(*args, **kwargs):
                 extraction_mode = decide_extraction_mode(pages_to_extract, groups, True)
             else:
                 extraction_mode = 'single'
-
-            # Show page selection preview
-            show_page_selection_preview(pages_to_extract, page_count)
 
             # Ask for confirmation unless in batch or dry-run mode
             proceed = True
