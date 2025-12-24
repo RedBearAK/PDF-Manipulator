@@ -5,9 +5,8 @@ File: pdf_manipulator/core/page_range/patterns.py
 FIXED: Removed comma detection logic since comma parsing now happens at parser level.
 This module now focuses solely on pattern matching for single expressions.
 
-ENHANCED: Now uses pdfplumber's raw extract_text() for text extraction, which
-properly reconstructs lines based on character positioning. This fixes issues
-where pypdf splits lines incorrectly, causing regex patterns to fail on OCR'd PDFs.
+ENHANCED: Now uses pdfplumber with tuned adaptive spacing for text extraction,
+which dramatically improves pattern matching accuracy on OCR'd PDFs.
 
 Features:
 - Single pattern detection: contains:, type:, size:, regex:, line-starts:
@@ -15,7 +14,7 @@ Features:
 - Pattern parsing and evaluation
 - Quote-aware utilities for use by parser
 - No comma detection - parser handles that
-- Pdfplumber text extraction for reliable pattern matching (with caching)
+- Tuned pdfplumber text extraction for reliable pattern matching
 """
 
 import re
@@ -28,9 +27,9 @@ from pdf_manipulator.core.page_analysis import PageAnalyzer
 from pdf_manipulator.core.warning_suppression import suppress_pdf_warnings
 from pdf_manipulator.core.page_range.page_group import PageGroup
 
-# Try to import pdfplumber for better text extraction
+# Try to import the tuned pdfplumber processor for better text extraction
 try:
-    import pdfplumber
+    from simple_pdf_scraper.processors.pdfplumber_processor import PDFPlumberProcessor
     PDFPLUMBER_AVAILABLE = True
 except ImportError:
     PDFPLUMBER_AVAILABLE = False
@@ -40,39 +39,15 @@ console = Console()
 
 
 #################################################################################################
-# Text Extraction Cache (to avoid re-extracting for each pattern)
-
-_extracted_texts_cache = {}  # Key: pdf_path (str), Value: list of page texts
-
-
-def _get_cache_key(pdf_path: Path) -> str:
-    """Get a cache key for a PDF file."""
-    return str(pdf_path.resolve())
-
-
-def _clear_extraction_cache():
-    """Clear the extraction cache (useful for testing)."""
-    global _extracted_texts_cache
-    _extracted_texts_cache = {}
-
-
-#################################################################################################
-# Text Extraction Helper
+# Text Extraction Helper (NEW)
 
 def _extract_all_page_texts(pdf_path: Path, total_pages: int) -> list[str]:
     """
-    Extract text from all pages using pdfplumber (raw) or pypdf fallback.
+    Extract text from all pages using pdfplumber (tuned) or pypdf fallback.
     
-    Results are cached per PDF file to avoid re-extraction when evaluating
-    multiple patterns against the same document.
-    
-    We use pdfplumber's raw extract_text() which properly reconstructs lines
-    based on character positioning. This fixes issues where pypdf splits lines
-    incorrectly, causing regex patterns to fail on OCR'd PDFs.
-    
-    Note: We intentionally use raw pdfplumber, NOT the tuned PDFPlumberProcessor,
-    because the adaptive spacing tuning can over-correct and insert unwanted
-    spaces/tabs that break pattern matching.
+    The pdfplumber processor uses empirically-tuned adaptive spacing that
+    dramatically improves text reconstruction from OCR'd PDFs. This fixes
+    issues where pypdf splits lines incorrectly, causing regex patterns to fail.
     
     Args:
         pdf_path: Path to the PDF file
@@ -81,36 +56,21 @@ def _extract_all_page_texts(pdf_path: Path, total_pages: int) -> list[str]:
     Returns:
         List of text strings, one per page (0-indexed)
     """
-    global _extracted_texts_cache
-    
-    cache_key = _get_cache_key(pdf_path)
-    
-    # Check cache first
-    if cache_key in _extracted_texts_cache:
-        cached = _extracted_texts_cache[cache_key]
-        # Ensure we have enough pages (in case total_pages increased)
-        if len(cached) >= total_pages:
-            return cached[:total_pages]
-    
-    # Extract using raw pdfplumber if available
     if PDFPLUMBER_AVAILABLE:
         try:
-            all_texts = []
-            with pdfplumber.open(pdf_path) as pdf:
-                for i in range(min(total_pages, len(pdf.pages))):
-                    try:
-                        text = pdf.pages[i].extract_text()
-                        all_texts.append(text if text else "")
-                    except Exception:
-                        all_texts.append("")
+            # Use the tuned processor with empirically-tested defaults:
+            # - add_space_ratio=1.1 prevents over-insertion while catching concatenated text
+            # - add_tab_ratio=1.3 creates structural boundaries
+            # - Both values automatically adapt to any font size
+            processor = PDFPlumberProcessor()
+            all_texts = processor.extract_pages(pdf_path)
+            
+            # Ensure we have the right number of pages
+            if len(all_texts) >= total_pages:
+                return all_texts[:total_pages]
             
             # Pad with empty strings if needed
-            if len(all_texts) < total_pages:
-                all_texts += [""] * (total_pages - len(all_texts))
-            
-            # Cache the results
-            _extracted_texts_cache[cache_key] = all_texts
-            return all_texts
+            return all_texts + [""] * (total_pages - len(all_texts))
             
         except Exception:
             pass  # Fall through to pypdf
@@ -128,11 +88,7 @@ def _extract_all_page_texts(pdf_path: Path, total_pages: int) -> list[str]:
                     texts.append("")
             
             # Pad with empty strings if needed
-            result = texts + [""] * (total_pages - len(texts))
-            
-            # Cache the results
-            _extracted_texts_cache[cache_key] = result
-            return result
+            return texts + [""] * (total_pages - len(texts))
             
     except Exception:
         return [""] * total_pages
@@ -235,81 +191,20 @@ def parse_single_expression(expr: str, pdf_path: Path, total_pages: int) -> list
     """Parse single expression - could be pattern or page number."""
     expr = expr.strip()
     
-    # Try as pattern first
+    # Check if it's a pattern
     if looks_like_pattern(expr):
         return parse_pattern_expression(expr, pdf_path, total_pages)
     
-    # Try as simple page number
-    if expr.isdigit():
+    # Try numeric parsing
+    try:
         page_num = int(expr)
         if 1 <= page_num <= total_pages:
             return [page_num]
-        else:
-            raise ValueError(f"Page number {page_num} out of range (1-{total_pages})")
-    
-    # Try as simple range
-    if re.match(r'^\d+-\d+$', expr):
-        start_str, end_str = expr.split('-')
-        start, end = int(start_str), int(end_str)
-        
-        if not (1 <= start <= total_pages and 1 <= end <= total_pages):
-            raise ValueError(f"Page numbers out of range: {expr}")
-        
-        if start <= end:
-            return list(range(start, end + 1))
-        else:
-            return list(range(start, end - 1, -1))
+        return []
+    except ValueError:
+        pass
     
     raise ValueError(f"Could not parse expression: {expr}")
-
-
-def split_comma_respecting_quotes(text: str) -> list[str]:
-    """
-    Split text on commas while respecting quoted strings.
-    
-    This function is used by the main parser for comma separation.
-    It's the ONLY comma-related function that should remain in this module.
-    """
-    if ',' not in text:
-        return [text]
-    
-    parts = []
-    current_part = ""
-    in_quote = False
-    quote_char = None
-    i = 0
-    
-    while i < len(text):
-        char = text[i]
-        
-        # Handle escapes
-        if char == '\\' and i + 1 < len(text):
-            current_part += char + text[i + 1]
-            i += 2
-            continue
-        
-        # Handle quotes
-        if char in ['"', "'"] and not in_quote:
-            in_quote = True
-            quote_char = char
-            current_part += char
-        elif char == quote_char and in_quote:
-            in_quote = False
-            quote_char = None
-            current_part += char
-        elif char == ',' and not in_quote:
-            # Found unquoted comma - split here
-            parts.append(current_part.strip())
-            current_part = ""
-        else:
-            current_part += char
-        
-        i += 1
-    
-    # Add final part
-    parts.append(current_part.strip())
-    
-    return parts
 
 
 #################################################################################################
@@ -438,9 +333,8 @@ def _evaluate_pattern(expression: str, pdf_path: Path, total_pages: int) -> list
     """
     Evaluate a pattern expression and return matching page numbers.
     
-    Uses pdfplumber's raw extract_text() for text extraction, which properly
-    reconstructs lines based on character positioning. This fixes issues where
-    pypdf splits lines incorrectly on OCR'd PDFs.
+    ENHANCED: Now uses pdfplumber with tuned adaptive spacing for text extraction,
+    which dramatically improves pattern matching accuracy on OCR'd PDFs.
     """
     if not pdf_path or not pdf_path.exists():
         raise ValueError(f"PDF file not found: {pdf_path}")
@@ -503,8 +397,8 @@ def _text_matches_pattern(text: str, pattern_type: str, value: str, case_insensi
     """
     Check if text matches the given pattern.
     
-    This function receives pre-extracted text (from pdfplumber's raw extraction),
-    which has proper line reconstruction for OCR'd PDFs.
+    This function receives pre-extracted text (from pdfplumber's tuned extraction),
+    which has proper spacing and line breaks for OCR'd PDFs.
     """
     if not text:
         return False
