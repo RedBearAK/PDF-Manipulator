@@ -7,8 +7,11 @@ Uses central parsing logic from patterns.py instead of duplicating validation.
 """
 
 import re
+
 from pathlib import Path
+from rich.markup import escape
 from rich.console import Console
+
 
 console = Console()
 
@@ -74,6 +77,8 @@ class FileSelector:
         - One page specification per line
         - Empty lines ignored
         - Lines starting with # are comments (ignored)
+        - Trailing comments (unquoted, whitespace-preceded #) are stripped
+        - A # inside a quoted pattern value is part of the pattern
         - Supports all standard page spec formats: 1-5, 10,20,30, first 3, etc.
         - Supports all pattern formats: contains:, regex:, contains/i:, regex/i:, etc.
         
@@ -104,18 +109,24 @@ class FileSelector:
         # Parse file contents - just extract non-comment lines
         page_specs = []
         for line_num, line in enumerate(lines, 1):
-            original_line = line
             line = line.strip()
-            
-            # Skip empty lines and comments
+
+            # Skip empty lines and full-line comments
             if not line or line.startswith('#'):
                 continue
-            
+
+            # Strip trailing comments (quote-aware, so '#' in patterns survives)
+            line = self._strip_inline_comment(line).strip()
+            if not line:
+                continue
+
             # FIXED: Use central validation instead of local patterns
             if self._is_valid_page_spec_using_central_logic(line):
                 page_specs.append(line)
             else:
-                console.print(f"[yellow]Warning: Invalid page spec on line {line_num} in {file_path}: '{line}'[/yellow]")
+                console.print(
+                    f"[yellow]Warning: Invalid page spec on line {line_num} "
+                    f"in {file_path}: '{escape(line)}'[/yellow]")
         
         if not page_specs:
             raise ValueError(f"No valid page specifications found in file: {file_path}")
@@ -123,9 +134,52 @@ class FileSelector:
         # Cache results
         self._file_cache[cache_key] = page_specs
         
-        console.print(f"[dim]Loaded {len(page_specs)} page specifications from {file_path.name}[/dim]")
+        console.print(f"[dim]Loaded {len(page_specs)} page specifications from {escape(file_path.name)}[/dim]")
         return page_specs
     
+    def _strip_inline_comment(self, line: str) -> str:
+        """
+        Strip a trailing comment from a spec line, respecting quotes.
+
+        A comment starts at a '#' that is outside any quoted string and is
+        either at the start of the line or preceded by whitespace. A '#'
+        inside quotes (e.g. contains:'Invoice #42') is part of the pattern.
+        Backslash-escaped characters are skipped, consistent with the other
+        quote-aware scanners in this package.
+
+        Args:
+            line: Raw (already whitespace-stripped) line from the file
+
+        Returns:
+            Line with any trailing comment removed (not re-stripped)
+        """
+        in_quote = False
+        quote_char = None
+        i = 0
+
+        while i < len(line):
+            char = line[i]
+
+            # Handle escapes
+            if char == '\\' and i + 1 < len(line):
+                i += 2
+                continue
+
+            # Handle quotes
+            if char in ['"', "'"] and not in_quote:
+                in_quote = True
+                quote_char = char
+            elif char == quote_char and in_quote:
+                in_quote = False
+                quote_char = None
+            elif char == '#' and not in_quote:
+                if i == 0 or line[i - 1] in [' ', '\t']:
+                    return line[:i]
+
+            i += 1
+
+        return line
+
     def _is_valid_page_spec_using_central_logic(self, line: str) -> bool:
         """
         Validate page specification using the central parsing logic.
@@ -288,12 +342,13 @@ class FileSelector:
             count = file_info['count']
             specs = file_info['specs']
             
-            # Show file and count
-            console.print(f"[dim]  {selector} → {count} patterns:[/dim]")
-            
+            # Show file and count (escape user-supplied text so rich never
+            # parses pattern contents like [/...] as markup tags)
+            console.print(f"[dim]  {escape(selector)} → {count} patterns:[/dim]")
+
             # Show ALL patterns for troubleshooting - no truncation
             for i, spec in enumerate(specs, 1):
-                console.print(f"[dim]    {i:2d}. {spec}[/dim]")
+                console.print(f"[dim]    {i:2d}. {escape(spec)}[/dim]")
         
         console.print()  # Empty line for spacing
 
