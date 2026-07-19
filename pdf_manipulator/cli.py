@@ -178,7 +178,7 @@ Examples:
     %(prog)s file.pdf --dump-text --output raw_text.txt
 
 Enhanced Pattern Syntax (Phase 4):
-    Base syntax:  [var=]keyword:movements+type+count[flags][^start_trim][%end_trim][pg<pages>][mt<matches>]
+    Base syntax:  [var=]keyword:movements+type+count[flags][^start_trim][%%end_trim][pg<pages>][mt<matches>]
     
     Movements:          u/d + 1-99: up/down lines
                         l/r + 1-99: left/right words
@@ -191,9 +191,9 @@ Enhanced Pattern Syntax (Phase 4):
                         _: exclude spaces from extracted content (before trimming)
     
     Trimming (NEW):     ^chN/^wdN/^lnN/^nbN: trim N chars/words/lines/numbers from start
-                        %chN/%wdN/%lnN/%nbN: trim N chars/words/lines/numbers from end
-                        Multiple per block: "Company:r1wd3_^ch2wd1%ch3"
-                        ('%' not '$' so patterns are safe inside double quotes)
+                        %%chN/%%wdN/%%lnN/%%nbN: trim N chars/words/lines/numbers from end
+                        Multiple per block: "Company:r1wd3_^ch2wd1%%ch3"
+                        ('%%' not '$' so patterns are safe inside double quotes)
     
     Page Specs:         pg3: page 3 only
                         pg2-4: pages 2 through 4

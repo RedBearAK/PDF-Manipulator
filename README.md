@@ -14,6 +14,9 @@ PDF Manipulator is a powerful command-line tool that goes beyond simple page ext
 - **Range Patterns**: Find sections like "Chapter 1 to Chapter 2" across multiple occurrences  
 - **Group Filtering**: Process results and filter by index or additional criteria
 - **Boundary Detection**: Split pages into logical groups at chapter/section boundaries
+- **Smart Renaming**: Name every output file from its own extracted content (invoice numbers, dates, cities)
+- **Text Scraping**: Pull structured data from PDFs into TSV with compact patterns and precise trimming
+- **Unified Text Extraction**: One text source for all features, with smart-pdf-ocr sidecar support
 - **Malformed PDF Repair**: Automatic detection and fixing with Ghostscript integration
 - **Batch Processing**: Handle entire folders with intelligent automation
 - **Multiple Output Modes**: Single document, separate files, or respect logical groupings
@@ -166,20 +169,37 @@ pdf-manipulator document.pdf \
 3-7                  # Pages 3 through 7
 3:7                  # Alternative range syntax  
 3..7                 # Another range syntax
+10-7                 # REVERSE range: pages 10, 9, 8, 7 in that order
 3-                   # Page 3 to end
 -7                   # Start to page 7
 1-3,7,9-11          # Multiple ranges (use quotes)
+10,5,1               # Comma order is preserved: extracts 10, then 5, then 1
 ```
+
+Comma-separated specs keep the order you wrote them in whenever it carries
+meaning (out-of-order numbers, reverse ranges, first/last, patterns). Plain
+ascending numeric lists are simply sorted.
 
 #### Special Selectors
 ```bash
-"first 3"           # First 3 pages
-"last 2"            # Last 2 pages  
+"first 3"           # First 3 pages (or the dash form: first-3)
+"last 2"            # Last 2 pages  (or: last-2)
 all                 # All pages
-::2                 # Odd pages (every 2nd starting from 1)
-2::2                # Even pages (every 2nd starting from 2)
-5:20:3              # Every 3rd page from 5 to 20
+odd / even          # Odd or even pages
 ```
+
+#### Slicing (start:stop:step, any part omitted)
+1-indexed with an INCLUSIVE stop -- page-range semantics, not Python's:
+```bash
+::2                 # Every 2nd page from page 1 -> 1, 3, 5, ...
+2::2                # Every 2nd page from page 2 -> 2, 4, 6, ...
+5:10                # Pages 5 through 10 (same as 5-10)
+5:10:2              # Every 2nd page from 5 through 10 -> 5, 7, 9
+:10:3               # Every 3rd page from 1 through 10 -> 1, 4, 7, 10
+3:                  # Page 3 to end
+```
+Backwards slices, zero steps, and starts beyond the document raise clear
+errors instead of silently matching nothing.
 
 ### Content-Based Patterns
 
@@ -198,6 +218,14 @@ type:image                  # Scanned/image pages
 type:mixed                  # Pages with both text and images
 type:empty                  # Blank or minimal content pages
 ```
+
+Invalid type values and malformed size conditions fail immediately with
+usage guidance rather than silently matching nothing.
+
+**Smart-OCR note**: pages from smart-pdf-ocr searchable PDFs classify as
+`type:mixed` (they contain the scan image AND the text layer), not
+`type:text`. Use `type:mixed` or content patterns when selecting on OCR'd
+documents.
 
 #### Size-Based Filtering
 ```bash
@@ -220,6 +248,31 @@ size:<=100KB                # Pages 100KB or smaller
 # NOT: Exclude matching pages
 "all & !contains:'DRAFT'"
 "!type:empty"
+```
+
+**Operator spacing is strict**: `&` and `|` must have exactly one space on
+each side. Malformed operators (`a& b`, `a  &  b`, trailing `type:text |`)
+raise a clear error instead of being silently treated as content patterns.
+Quoted text is always free: `contains:'A & B'` searches for the literal
+ampersand.
+
+#### Numeric Operands (Page-Window Intersections)
+
+Pages, ranges, slices, and first/last are valid boolean operands, so
+selections can be confined to a page window:
+
+```bash
+# Every 2nd page from 5-15 that ALSO matches the pattern
+"5:15:2 & regex/i:'K\s*O\s*D'"
+
+# Mixed-content pages within the first 10
+"first-10 & type:mixed"
+
+# Everything except pages 4-7
+"all & !4-7"
+
+# Two windows joined
+"3-5 | 8-9"
 ```
 
 #### Complex Combinations
@@ -250,7 +303,16 @@ Find content between patterns - extracts ALL matching sections:
 
 # With offset adjustments
 "contains:'Section'+1 to contains:'References'-1"
+
+# Document boundary keywords
+"contains:'Appendix' to end"
+"start to contains:'Introduction'"
 ```
+
+Endpoints can be content patterns (with optional `+N`/`-N` offsets), plain
+page numbers, or the keywords `start`/`end` for the document boundaries.
+The ` to ` separator matches in any case (`TO`, `To`, `tO`). Quoted text like
+`contains:'A to B'` never triggers range detection.
 
 ### Advanced Group Processing
 
@@ -294,6 +356,52 @@ pdf-manipulator file.pdf --extract-pages="1-5,10" --separate-files
 # Respect groupings (ranges→multi-page, individuals→single files)
 pdf-manipulator file.pdf --extract-pages="1-3,7,9-11" --respect-groups
 ```
+
+### Smart Renaming (Pattern-Based Filenames)
+
+Combine `--scrape-pattern` with `--filename-template` and every output file
+is named from its own extracted content. Works in all three output modes:
+
+```bash
+# Single document: variables extracted from --pattern-source-page (default 1)
+pdf-manipulator invoice.pdf --extract-pages=1 --batch \
+    --scrape-pattern="inv=No:wd1" \
+    --scrape-pattern="date=Invoice Date:wd1_" \
+    --filename-template="INV{inv}_{date}.pdf"
+# -> INV27679_7-23-2026.pdf
+
+# Separate files: EACH PAGE NAMES ITSELF -- patterns without pg specs read
+# the page being extracted, so an invoice batch splits into per-invoice files
+pdf-manipulator batch.pdf --extract-pages=1-5 --separate-files --batch \
+    --scrape-pattern="inv=No:wd1" \
+    --scrape-pattern="city=Place of receipt:wd2_" \
+    --filename-template="GXY{inv}_{city}.pdf"
+# -> GXY27597_KODIAK-AK.pdf, GXY27594_KODIAK-AK.pdf, GXY27586_SEWARD-AK.pdf, ...
+
+# Grouped files: each group is named from its FIRST page
+pdf-manipulator batch.pdf --extract-pages="1-2,3" --respect-groups --batch \
+    --scrape-pattern="inv=Invoice Number:wd1" \
+    --filename-template="{inv}_{range}.pdf"
+```
+
+Semantics worth knowing:
+
+- Patterns **without** `pg` specs read from the page being extracted
+  (separate mode) or the group's first page (grouped mode). Patterns
+  **with** explicit `pg` specs stay document-level: `batch=Batch:wd1pg1`
+  puts the same page-1 batch code into every filename alongside each page's
+  own values.
+- Built-in variables: `{range}` (page/group description),
+  `{original_name}`, and `{var|fallback}` fallback syntax.
+- Extracted values are sanitized for filenames automatically (slashes in
+  dates become dashes: `7/23/2026` -> `7-23-2026`; the `_` pattern flag
+  drops spaces so `KODIAK, AK` -> `KODIAK-AK`).
+- Duplicate extracted values resolve to unique names
+  (`INV-DUP.pdf`, `INV-DUP_copy_01.pdf`).
+- `--dry-run` previews the REAL extracted names (extraction is read-only),
+  so you can verify a whole batch before writing anything.
+- If extraction fails, naming falls back to the simple scheme with a
+  visible warning -- a bad pattern never crashes an extraction run.
 
 ### Batch Processing
 
@@ -351,7 +459,7 @@ pdf-manipulator annual-report.pdf --extract-pages="contains:'Executive Summary' 
 pdf-manipulator report.pdf --extract-pages="type:mixed & size:>1MB"
 
 # Extract appendices only
-pdf-manipulator document.pdf --extract-pages="contains:'Appendix' to $"
+pdf-manipulator document.pdf --extract-pages="contains:'Appendix' to end"
 ```
 
 ### Academic Papers
@@ -382,6 +490,34 @@ pdf-manipulator statements.pdf --extract-pages="regex:'INV-\d+'"
 
 # Financial summaries only
 pdf-manipulator documents.pdf --extract-pages="contains:'Total' & contains:'$'"
+
+# Split a scanned invoice batch into per-invoice files, each named from its
+# own content (run smart-pdf-ocr first for the searchable PDF)
+pdf-manipulator batch_smartocr.pdf --extract-pages=all --separate-files --batch \
+    --scrape-pattern="inv=No:wd1" \
+    --scrape-pattern="city=Place of receipt:wd2_" \
+    --filename-template="GXY{inv}_{city}.pdf"
+
+# Scrape the whole batch to a spreadsheet instead of splitting it
+pdf-manipulator batch_smartocr.pdf --scrape-text \
+    --scrape-pattern="inv=No:wd1pg0" \
+    --scrape-pattern="date=Invoice Date:wd1" \
+    --scrape-pattern="city=Place of receipt:wd2" \
+    --output batch_data.tsv
+```
+
+### OCR'd Document Selection (pattern files)
+```bash
+# OCR text has unreliable spacing and character confusion; regex patterns
+# with optional whitespace handle it: K\s*O\s*D matches "KOD", "K OD", "K O D"
+pdf-manipulator scans.pdf --extract-pages="regex/i:'K\s*O\s*D\s*I\s*A\s*K'"
+
+# Keep a library of city/route patterns in a file, one spec per line
+# (lines starting with # are comments); groups appear in pattern order
+pdf-manipulator scans.pdf --extract-pages="file:PATTERNS.txt" --respect-groups
+
+# Search only within a page window
+pdf-manipulator scans.pdf --extract-pages="40:60 & regex/i:'S\s*E\s*W\s*A\s*R\s*D'"
 ```
 
 ## 🛠️ Command Reference
@@ -390,6 +526,8 @@ pdf-manipulator documents.pdf --extract-pages="contains:'Total' & contains:'$'"
 ```bash
 --extract-pages=RANGE     # Extract specific pages/content
 --split-pages             # Split into individual pages
+--scrape-text             # Extract pattern data to TSV (no page extraction)
+--dump-text               # Dump page-by-page text (debugging)
 --optimize                # Optimize file size
 --analyze                 # Basic PDF analysis
 --analyze-detailed        # Detailed page-by-page breakdown
@@ -404,6 +542,16 @@ pdf-manipulator documents.pdf --extract-pages="contains:'Total' & contains:'$'"
 --filter-matches=CRITERIA # Filter groups by index or content
 --group-start=PATTERN     # Start new groups at pattern
 --group-end=PATTERN       # End groups at pattern
+```
+
+### Pattern Extraction & Naming
+```bash
+--scrape-pattern=PATTERN  # Compact extraction pattern (repeatable)
+--scrape-patterns-file=F  # Load patterns from a file (one per line)
+--filename-template=TMPL  # Name outputs from extracted variables
+--pattern-source-page=N   # Fallback page for patterns without pg specs
+--text-file=FILE          # smart-pdf-ocr sidecar text as the text source
+--output=FILE             # Output file for --scrape-text / --dump-text
 ```
 
 ### Processing Modes

@@ -497,13 +497,40 @@ def _text_matches_pattern(text: str, pattern_type: str, value: str, case_insensi
         return False
 
 
+def _evaluate_range_endpoint(spec: str, pdf_path: Path, total_pages: int) -> list[int]:
+    """
+    Evaluate one side of a range pattern.
+
+    An endpoint can be a content pattern (with optional +N/-N offset), a
+    plain page number ("5 to contains:'Appendix'"), or the keywords
+    'start' / 'end' for the document boundaries
+    ("contains:'Appendix' to end").
+    """
+    spec = spec.strip()
+    keyword = spec.lower()
+
+    if keyword == 'end':
+        return [total_pages]
+    if keyword == 'start':
+        return [1]
+
+    if spec.isdigit():
+        page_num = int(spec)
+        if not 1 <= page_num <= total_pages:
+            raise ValueError(
+                f"Range endpoint page {page_num} out of range (1-{total_pages})"
+            )
+        return [page_num]
+
+    return parse_pattern_expression(spec, pdf_path, total_pages)
+
+
 def _find_all_range_sections(start_pattern: str, end_pattern: str, pdf_path: Path, total_pages: int) -> list[tuple[int, int]]:
     """Find all sections matching the range pattern."""
-    # Find all pages matching start pattern
-    start_pages = parse_pattern_expression(start_pattern, pdf_path, total_pages)
+    # Endpoints may be patterns, page numbers, or start/end keywords
+    start_pages = _evaluate_range_endpoint(start_pattern, pdf_path, total_pages)
     
-    # Find all pages matching end pattern  
-    end_pages = parse_pattern_expression(end_pattern, pdf_path, total_pages)
+    end_pages = _evaluate_range_endpoint(end_pattern, pdf_path, total_pages)
     
     if not start_pages:
         raise ValueError(f"No pages found matching start pattern: {start_pattern}")

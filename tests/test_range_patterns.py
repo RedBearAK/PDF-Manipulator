@@ -274,6 +274,49 @@ def test_case_sensitivity():
     return passed == total
 
 
+def test_endpoint_forms():
+    """Range endpoints accept page numbers and start/end keywords."""
+    print("=== Testing Range Endpoint Forms ===")
+    ensure_test_pdf()
+
+    from pdf_manipulator.core.page_range.patterns import parse_range_pattern
+
+    # test_document.pdf: p1 "Chapter 1", p2 "Chapter 2", p3 "Summary", p4 empty
+    test_cases = [
+        ("1 to contains:'Summary'", [1, 2, 3], "Number to pattern"),
+        ("contains:'Chapter 2' to end", [2, 3, 4], "Pattern to end keyword"),
+        ("start to contains:'Chapter 2'", [1, 2], "Start keyword to pattern"),
+        ("2 to 3", [2, 3], "Number to number"),
+        ("start to end", [1, 2, 3, 4], "Both boundary keywords"),
+    ]
+
+    passed = 0
+    total = len(test_cases)
+
+    for range_str, expected, description in test_cases:
+        try:
+            pages = parse_range_pattern(range_str, MOCK_PDF_PATH, 4)
+            if sorted(pages) == expected:
+                print(f"✓ {description}: '{range_str}' → {sorted(pages)}")
+                passed += 1
+            else:
+                print(f"✗ {description}: '{range_str}' → {sorted(pages)}, expected {expected}")
+        except Exception as e:
+            print(f"✗ {description}: '{range_str}' → Exception: {e}")
+
+    # Out-of-range numeric endpoint must raise
+    total += 1
+    try:
+        parse_range_pattern("99 to end", MOCK_PDF_PATH, 4)
+        print("✗ Out-of-range endpoint: should have failed")
+    except ValueError:
+        print("✓ Out-of-range endpoint: correctly failed")
+        passed += 1
+
+    print(f"Endpoint forms: {passed}/{total} passed\n")
+    return passed == total
+
+
 def main():
     """Run all range pattern tests."""
     print("RANGE PATTERN TESTS")
@@ -288,6 +331,7 @@ def main():
         test_quoted_to_handling,
         test_invalid_range_patterns,
         test_case_sensitivity,
+        test_endpoint_forms,
     ]
     
     results = []
