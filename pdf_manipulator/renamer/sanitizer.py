@@ -76,19 +76,24 @@ def sanitize_filename(text: str, max_length: int = 50) -> str:
     # Remove or replace problematic characters
     clean = str(text).strip()
     
-    # Special handling for monetary amounts and numbers
-    if re.match(r'[\$£€¥]?[\d,]+\.?\d*', clean):
+    # Special handling for monetary amounts and numbers. Must be a FULL match:
+    # re.match() anchored only at the start, so "7/23/2026" matched on its
+    # leading digit, took this branch, and kept its slashes -- which then
+    # reached open() as directory separators. Dates and mixed strings belong
+    # in the general branch.
+    if re.fullmatch(r'[\$£€¥]?[\d,]+\.?\d*', clean):
         # Remove currency symbols and thousands separators
         clean = re.sub(r'[\$£€¥,]', '', clean)
         # Replace decimal points with dashes for filename safety
         clean = re.sub(r'\.', '-', clean)
     else:
         # General text handling
-        # Replace filesystem-unsafe characters with dashes
-        clean = re.sub(r'[<>:"/\\|?*]', '-', clean)
-        
         # Replace other punctuation and spaces with dashes
         clean = re.sub(r'[^\w\.\-]', '-', clean)
+    
+    # Unconditional safety net: no filesystem-unsafe character may survive
+    # this function, whichever branch ran above.
+    clean = re.sub(r'[<>:"/\\|?*]', '-', clean)
     
     # Collapse multiple dashes
     clean = re.sub(r'-+', '-', clean)

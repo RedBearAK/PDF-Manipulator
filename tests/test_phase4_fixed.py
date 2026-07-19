@@ -124,7 +124,7 @@ def test_regex_validation_fixes():
     COMPACT_PATTERN = re.compile(
         r'^([udlr]\d{1,2})?([udlr]\d{1,2})?(wd|ln|nb)(\d{1,2})([_\-]*)'
         r'(\^(?:(?:wd|ln|nb|ch)\d{1,3})+)?'  # Start trimmers (+ means 1 or more)
-        r'(\$(?:(?:wd|ln|nb|ch)\d{1,3})+)?'  # End trimmers (+ means 1 or more)
+        r'(%(?:(?:wd|ln|nb|ch)\d{1,3})+)?'  # End trimmers (+ means 1 or more)
         r'(pg(?:\d{1,3}-\d{1,3}|\d{1,3}-|-\d{1,3}|\d{1,3}|0))?'
         r'(mt(?:\d{1,3}-\d{1,3}|\d{1,3}-|-\d{1,3}|\d{1,3}|0))?$'
     )
@@ -135,8 +135,8 @@ def test_regex_validation_fixes():
         if '^' in spec and not re.search(r'\^(?:wd|ln|nb|ch)\d{1,3}', spec):
             return False, f"Invalid '^' character without valid trimmer operations"
         
-        if '$' in spec and not re.search(r'\$(?:wd|ln|nb|ch)\d{1,3}', spec):
-            return False, f"Invalid '$' character without valid trimmer operations"
+        if '%' in spec and not re.search(r'%(?:wd|ln|nb|ch)\d{1,3}', spec):
+            return False, f"Invalid '%' character without valid trimmer operations"
         
         # Check regex match
         match = COMPACT_PATTERN.match(spec)
@@ -148,18 +148,18 @@ def test_regex_validation_fixes():
     test_cases = [
         # (pattern, should_be_valid, description)
         ("wd1^ch5", True, "Valid start trimmer"),
-        ("wd1$ch3", True, "Valid end trimmer"),
-        ("wd1^ch5$ch3", True, "Valid both trimmers"),
+        ("wd1%ch3", True, "Valid end trimmer"),
+        ("wd1^ch5%ch3", True, "Valid both trimmers"),
         ("r1wd1", True, "No trimmers (backward compatibility)"),
         ("wd1^ch5wd1nb2", True, "Multiple start trimmers"),
         
         # Should be invalid
         ("wd1^", False, "Empty start trimmer"),
-        ("wd1$", False, "Empty end trimmer"),
+        ("wd1%", False, "Empty end trimmer (%)"),
         ("wd1^ch5$", False, "Valid start, empty end"),
-        ("wd1^$ch3", False, "Empty start, valid end"),
+        ("wd1^%ch3", False, "Empty start, valid end"),
         ("^ch5", False, "Missing base extraction"),
-        ("$ch3", False, "Missing base extraction"),
+        ("%ch3", False, "Missing base extraction"),
         ("wd1^ch", False, "Missing count in trimmer"),
         ("wd1^xy5", False, "Invalid trimmer type"),
     ]
@@ -190,7 +190,7 @@ def test_real_world_scenarios_fixed():
         {
             'name': 'Company Name Extraction',
             'content': 'CompanyNameACMECorporation',
-            'pattern_spec': 'wd1^ch11$ch11',
+            'pattern_spec': 'wd1^ch11%ch11',
             'start_trimmers': [('ch', 11)],
             'end_trimmers': [('ch', 11)],
             'expected': 'ACME'
@@ -206,7 +206,7 @@ def test_real_world_scenarios_fixed():
         {
             'name': 'Reference Code Cleanup (FIXED)',
             'content': 'OLD-REF-2024-001-TEMP',
-            'pattern_spec': 'wd1^ch4$nb1',
+            'pattern_spec': 'wd1^ch4%nb1',
             'start_trimmers': [('ch', 4)],
             'end_trimmers': [('nb', 1)],
             'expected': 'REF-2024-'
@@ -223,7 +223,7 @@ def test_real_world_scenarios_fixed():
         {
             'name': 'Account Code Extraction',
             'content': 'Account123Extra',
-            'pattern_spec': 'wd1$nb1',
+            'pattern_spec': 'wd1%nb1',
             'start_trimmers': [],
             'end_trimmers': [('nb', 1)],
             'expected': 'Account'

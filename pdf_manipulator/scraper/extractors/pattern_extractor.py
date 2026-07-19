@@ -14,7 +14,10 @@ import re
 
 from pathlib import Path
 
-from pdf_manipulator.scraper.processors.pypdf_processor import PyPDFProcessor
+from pdf_manipulator.core.text_extraction import (
+    get_page_text,
+    get_pdf_page_count,
+)
 
 
 class PatternExtractor:
@@ -32,7 +35,6 @@ class PatternExtractor:
         # Common number patterns for extraction
         self.number_pattern = re.compile(r'-?\d+(?:[.,]\d+)*')
         self.word_pattern = re.compile(r'\S+')
-        self.pdf_processor = PyPDFProcessor(suppress_warnings=True)
     
     def extract_pattern_enhanced(self, pdf_path: Path, pattern: dict, 
                                page_spec: dict = None) -> dict:
@@ -200,17 +202,16 @@ class PatternExtractor:
         Returns:
             Number of pages, or 1 if unable to determine
         """
-        try:
-            import pypdf
-            with open(pdf_path, 'rb') as f:
-                reader = pypdf.PdfReader(f)
-                return len(reader.pages)
-        except Exception:
-            return 1  # Conservative fallback
+        count = get_pdf_page_count(pdf_path)
+        return count if count > 0 else 1  # Conservative fallback
     
     def _extract_page_text(self, pdf_path: Path, page_num: int) -> str:
         """
-        Extract text from a specific page.
+        Extract text from a specific page via the unified text provider.
+
+        Text comes from the same source the page-selection patterns use
+        (sidecar text file if registered, else raw pdfplumber, else pypdf),
+        so scrape patterns and page-selection patterns always agree.
         
         Args:
             pdf_path: Path to PDF file
@@ -220,7 +221,7 @@ class PatternExtractor:
             Extracted text or empty string on error
         """
         try:
-            return self.pdf_processor.extract_page(pdf_path, page_num)
+            return get_page_text(pdf_path, page_num)
         except Exception:
             return ""
     
@@ -302,33 +303,34 @@ class PatternExtractor:
         """
         Legacy method for backward compatibility with Phase 2 patterns.
         """
-        # Convert to single-page, single-match format for legacy callers
-        if isinstance(pattern, dict) and 'keyword' in pattern:
+        # Enhanced format is identified by its 'movements' list; legacy formats
+        # carry 'direction'/'distance' (or the older 'movement_*' key names).
+        if isinstance(pattern, dict) and 'movements' in pattern:
             # Enhanced pattern format
             keyword_pos = self.find_keyword(text, pattern['keyword'])
             if keyword_pos is None:
                 return None
-            
+
             movements = pattern.get('movements', [])
             target_pos = self._calculate_target_position_chained(text, keyword_pos, movements)
-            
+
             return self._extract_content_enhanced(
-                text, target_pos, 
-                pattern['extract_type'], 
+                text, target_pos,
+                pattern['extract_type'],
                 pattern['extract_count'],
                 pattern.get('flexible', False)
             )
         else:
             # Legacy pattern format - delegate to original logic
             keyword = pattern.get('keyword', '')
-            movement_direction = pattern.get('movement_direction', '')
-            movement_distance = pattern.get('movement_distance', 0)
+            movement_direction = pattern.get('direction', pattern.get('movement_direction', ''))
+            movement_distance = pattern.get('distance', pattern.get('movement_distance', 0))
             extract_type = pattern.get('extract_type', 'word')
-            
+
             keyword_pos = self.find_keyword(text, keyword)
             if keyword_pos is None:
                 return None
-            
+
             target_pos = self._calculate_target_position(text, keyword_pos, movement_direction, movement_distance)
             return self._extract_content(text, target_pos, extract_type)
     
@@ -466,49 +468,86 @@ class PatternExtractor:
     def _calculate_target_position_chained(self, text, keyword_pos, movements):
         """
         Calculate target position using chained movements.
-        Enhanced for Phase 3 with better error handling.
+
+        Semantics:
+        - u/d movements count only non-empty lines (lines containing words),
+            since blank lines in OCR'd text are layout noise, not content the
+            pattern author is counting. Word position resets to line start.
+        - l/r movements stay within the current line, clamped to valid words.
+        - No movements at all means "the content right after the keyword":
+            the position advances one word past the keyword, matching the old
+            scraper's right:0 behavior. Nobody wants the keyword itself.
+        - A final position with no word under it (keyword at end of line with
+            no movements, movement off the end) returns None -> No_Match.
         """
         if not keyword_pos:
             return None
-        
+
         lines = text.split('\n')
         current_line = keyword_pos['line']
         current_word = keyword_pos['word_index']
-        
-        # Apply each movement in sequence
-        for direction, distance in movements:
-            if direction == 'u':
-                current_line = max(0, current_line - distance)
-                # Reset word position to start of line
-                current_word = 0
-            elif direction == 'd':
-                current_line = min(len(lines) - 1, current_line + distance)
-                # Reset word position to start of line
-                current_word = 0
-            elif direction == 'l':
-                # Move left within current line
-                if current_line < len(lines):
-                    words_in_line = len(lines[current_line].split())
+
+        if not movements:
+            # Default: content starts one word after the keyword
+            current_word += 1
+        else:
+            for direction, distance in movements:
+                if direction == 'u':
+                    current_line = self._move_lines(lines, current_line, -distance)
+                    current_word = 0
+                elif direction == 'd':
+                    current_line = self._move_lines(lines, current_line, distance)
+                    current_word = 0
+                elif direction == 'l':
                     current_word = max(0, current_word - distance)
-            elif direction == 'r':
-                # Move right within current line
-                if current_line < len(lines):
-                    words_in_line = len(lines[current_line].split())
-                    current_word = min(words_in_line - 1, current_word + distance)
-        
+                elif direction == 'r':
+                    # Clamp to the last word so overshooting movements like
+                    # r10 on a short line stay forgiving (long-standing behavior)
+                    words_here = lines[current_line].split() if 0 <= current_line < len(lines) else []
+                    if words_here:
+                        current_word = min(len(words_here) - 1, current_word + distance)
+                    else:
+                        current_word = current_word + distance
+
         # Validate final position
-        if current_line >= len(lines):
+        if current_line < 0 or current_line >= len(lines):
             return None
-        
+
         words_in_line = lines[current_line].split()
-        if current_word >= len(words_in_line):
+        if not words_in_line or current_word >= len(words_in_line) or current_word < 0:
             return None
-        
+
         return {
             'line': current_line,
             'word_index': current_word,
             'line_text': lines[current_line]
         }
+
+    def _move_lines(self, lines, current_line, distance):
+        """
+        Move up (negative) or down (positive) by |distance| non-empty lines.
+
+        Empty lines are skipped, not counted. Movement clamps at the first or
+        last non-empty line when the document runs out.
+        """
+        if distance == 0:
+            return current_line
+
+        step = 1 if distance > 0 else -1
+        remaining = abs(distance)
+        position = current_line
+
+        while remaining > 0:
+            probe = position + step
+            # Skip empty lines without consuming movement distance
+            while 0 <= probe < len(lines) and not lines[probe].split():
+                probe += step
+            if probe < 0 or probe >= len(lines):
+                break  # Clamp: stay on the last non-empty line reached
+            position = probe
+            remaining -= 1
+
+        return position
 
     def _extract_content_enhanced(self, text, target_pos, extract_type, extract_count, flexible, movements=None):
         """
@@ -521,8 +560,10 @@ class PatternExtractor:
         start_line = target_pos['line']
         start_word = target_pos.get('word_index', 0)
         
-        # Apply movements if provided (for direct calls)
-        if movements:
+        # Apply movements when a movements list is supplied (even an empty one:
+        # empty means "content right after the keyword"). Callers that already
+        # computed the final position pass movements=None.
+        if movements is not None:
             adjusted_pos = self._calculate_target_position_chained(text, target_pos, movements)
             if not adjusted_pos:
                 return None

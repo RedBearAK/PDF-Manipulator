@@ -19,6 +19,7 @@ from pdf_manipulator.core.smart_filenames import (
     generate_extraction_filename,
     generate_smart_description
 )
+from pdf_manipulator.renamer.filename_generator import FilenameGenerator
 from pdf_manipulator.core.operation_context import OpCtx, get_cached_parsing_results, get_parsed_pages
 from pdf_manipulator.core.warning_suppression import suppress_pdf_warnings
 from pdf_manipulator.ui_enhanced import show_extraction_summary
@@ -147,8 +148,19 @@ def extract_pages(*args, **kwargs) -> tuple[Path, float]:
         if not ordered_pages:
             raise ValueError("No pages remaining after deduplication")
         
-        # Use existing simple filename generation (no renamer complexity)
-        output_path = generate_extraction_filename(pdf_path, range_desc, use_timestamp, custom_prefix)
+        # Smart naming when patterns and a template are supplied; else simple naming
+        if patterns and template:
+            generator = FilenameGenerator()
+            output_path, naming_info = generator.generate_smart_filename(
+                pdf_path, range_desc, patterns, template, source_page, dry_run
+            )
+            if naming_info.get('fallback_used'):
+                for err in naming_info.get('extraction_errors', []):
+                    console.print(f"[yellow]Smart naming fallback: {err}[/yellow]")
+        else:
+            output_path = generate_extraction_filename(
+                pdf_path, range_desc, 'single', use_timestamp, custom_prefix
+            )
         
         # Handle conflict resolution
         if not dry_run:
@@ -413,7 +425,9 @@ def extract_pages_separate(*args, **kwargs) -> list[tuple[Path, float]]:
         for page_num in ordered_pages:
             # Generate filename for this page using existing simple logic
             page_desc = f"page{page_num:02d}"
-            output_path = generate_extraction_filename(pdf_path, page_desc, use_timestamp, custom_prefix)
+            output_path = generate_extraction_filename(
+                pdf_path, page_desc, 'separate', use_timestamp, custom_prefix
+            )
             
             # Handle conflict resolution for this page
             if not dry_run:

@@ -15,7 +15,7 @@ Features:
 - Pattern parsing and evaluation
 - Quote-aware utilities for use by parser
 - No comma detection - parser handles that
-- Pdfplumber text extraction for reliable pattern matching (with caching)
+- Unified text extraction (core.text_extraction) shared with the scraper
 """
 
 import re
@@ -25,117 +25,39 @@ from pathlib import Path
 from rich.console import Console
 
 from pdf_manipulator.core.page_analysis import PageAnalyzer
+from pdf_manipulator.core.text_extraction import get_page_texts, clear_text_cache
 from pdf_manipulator.core.warning_suppression import suppress_pdf_warnings
 from pdf_manipulator.core.page_range.page_group import PageGroup
-
-# Try to import pdfplumber for better text extraction
-try:
-    import pdfplumber
-    PDFPLUMBER_AVAILABLE = True
-except ImportError:
-    PDFPLUMBER_AVAILABLE = False
 
 
 console = Console()
 
 
 #################################################################################################
-# Text Extraction Cache (to avoid re-extracting for each pattern)
-
-_extracted_texts_cache = {}  # Key: pdf_path (str), Value: list of page texts
-
-
-def _get_cache_key(pdf_path: Path) -> str:
-    """Get a cache key for a PDF file."""
-    return str(pdf_path.resolve())
-
+# Text Extraction (delegated to the unified provider)
 
 def _clear_extraction_cache():
-    """Clear the extraction cache (useful for testing)."""
-    global _extracted_texts_cache
-    _extracted_texts_cache = {}
+    """Clear the shared extraction cache (useful for testing)."""
+    clear_text_cache()
 
-
-#################################################################################################
-# Text Extraction Helper
 
 def _extract_all_page_texts(pdf_path: Path, total_pages: int) -> list[str]:
     """
-    Extract text from all pages using pdfplumber (raw) or pypdf fallback.
-    
-    Results are cached per PDF file to avoid re-extraction when evaluating
-    multiple patterns against the same document.
-    
-    We use pdfplumber's raw extract_text() which properly reconstructs lines
-    based on character positioning. This fixes issues where pypdf splits lines
-    incorrectly, causing regex patterns to fail on OCR'd PDFs.
-    
-    Note: We intentionally use raw pdfplumber, NOT the tuned PDFPlumberProcessor,
-    because the adaptive spacing tuning can over-correct and insert unwanted
-    spaces/tabs that break pattern matching.
-    
+    Get text for all pages via the unified text provider.
+
+    Delegates to pdf_manipulator.core.text_extraction so page-selection
+    patterns and scraper patterns are guaranteed to see identical text
+    (sidecar text file if registered, else raw pdfplumber, else pypdf).
+    Results are cached per PDF by the provider.
+
     Args:
         pdf_path: Path to the PDF file
         total_pages: Number of pages to extract
-        
+
     Returns:
         List of text strings, one per page (0-indexed)
     """
-    global _extracted_texts_cache
-    
-    cache_key = _get_cache_key(pdf_path)
-    
-    # Check cache first
-    if cache_key in _extracted_texts_cache:
-        cached = _extracted_texts_cache[cache_key]
-        # Ensure we have enough pages (in case total_pages increased)
-        if len(cached) >= total_pages:
-            return cached[:total_pages]
-    
-    # Extract using raw pdfplumber if available
-    if PDFPLUMBER_AVAILABLE:
-        try:
-            all_texts = []
-            with pdfplumber.open(pdf_path) as pdf:
-                for i in range(min(total_pages, len(pdf.pages))):
-                    try:
-                        text = pdf.pages[i].extract_text()
-                        all_texts.append(text if text else "")
-                    except Exception:
-                        all_texts.append("")
-            
-            # Pad with empty strings if needed
-            if len(all_texts) < total_pages:
-                all_texts += [""] * (total_pages - len(all_texts))
-            
-            # Cache the results
-            _extracted_texts_cache[cache_key] = all_texts
-            return all_texts
-            
-        except Exception:
-            pass  # Fall through to pypdf
-    
-    # Fallback to pypdf (less accurate for OCR'd PDFs)
-    try:
-        with suppress_pdf_warnings():
-            reader = PdfReader(pdf_path)
-            texts = []
-            for i in range(min(total_pages, len(reader.pages))):
-                try:
-                    text = reader.pages[i].extract_text()
-                    texts.append(text if text else "")
-                except Exception:
-                    texts.append("")
-            
-            # Pad with empty strings if needed
-            result = texts + [""] * (total_pages - len(texts))
-            
-            # Cache the results
-            _extracted_texts_cache[cache_key] = result
-            return result
-            
-    except Exception:
-        return [""] * total_pages
+    return get_page_texts(pdf_path, total_pages)
 
 
 #################################################################################################

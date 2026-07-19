@@ -75,7 +75,7 @@ class FilenameGenerator:
             # Parse and validate all patterns
             parsed_patterns = self.pattern_processor.validate_pattern_list(patterns)
             extraction_results['patterns_processed'] = [
-                f"{var}={keyword}:{spec}" for var, keyword, spec in parsed_patterns
+                info['original_pattern'] for info in parsed_patterns
             ]
             
             # Extract content using enhanced pattern processor
@@ -108,7 +108,7 @@ class FilenameGenerator:
             
             # Apply template substitution
             try:
-                filename = self.template_engine.apply_template(template, template_variables)
+                filename = self.template_engine.substitute_variables(template, template_variables)
                 extraction_results['template_result'] = filename
                 
                 # Ensure .pdf extension
@@ -152,7 +152,7 @@ class FilenameGenerator:
         
         Args:
             pdf_path: Path to PDF file
-            parsed_patterns: List of (variable_name, keyword, extraction_spec) tuples
+            parsed_patterns: List of parsed pattern dicts from validate_pattern_list()
             source_page: Fallback page for patterns without pg specification
             dry_run: Whether this is a dry-run extraction
             
@@ -161,7 +161,10 @@ class FilenameGenerator:
         """
         results = {}
         
-        for variable_name, keyword, extraction_spec in parsed_patterns:
+        for pattern_info in parsed_patterns:
+            variable_name = pattern_info['variable_name']
+            keyword = pattern_info['keyword']
+            extraction_spec = pattern_info['extraction_spec']
             try:
                 # Phase 3: Use enhanced extraction with multi-page/multi-match support
                 result = self.pattern_processor.extract_from_pdf(
@@ -356,14 +359,16 @@ class FilenameGenerator:
         extraction_preview = {}
         try:
             parsed_patterns = self.pattern_processor.validate_pattern_list(patterns)
-            
-            for var_name, keyword, extraction_spec in parsed_patterns:
+
+            for pattern_info in parsed_patterns:
+                var_name = pattern_info['variable_name']
+                keyword = pattern_info['keyword']
                 # Create realistic simulated values
                 simulated_value = self._generate_simulated_value(keyword, var_name)
                 extraction_preview[var_name] = {
                     'keyword': keyword,
                     'simulated_value': simulated_value,
-                    'extraction_spec': str(extraction_spec)
+                    'extraction_spec': str(pattern_info['extraction_spec'])
                 }
         
         except Exception as e:
@@ -385,7 +390,7 @@ class FilenameGenerator:
             template_variables[var_name] = preview_info['simulated_value']
         
         try:
-            filename_preview = self.template_engine.apply_template(template, template_variables)
+            filename_preview = self.template_engine.substitute_variables(template, template_variables)
             if not filename_preview.lower().endswith('.pdf'):
                 filename_preview += '.pdf'
         except Exception as e:

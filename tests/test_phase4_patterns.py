@@ -67,18 +67,18 @@ def test_phase4_regex_patterns():
     test_cases = [
         # Basic Phase 4 patterns
         ("wd1^ch5", True, "Valid start trimmer"),
-        ("wd1$ch3", True, "Valid end trimmer"),
-        ("wd3^ch5$ch3", True, "Valid both trimmers"),
-        ("wd4_^wd1ch2$ch4", True, "With flags and complex trimmers"),
-        ("wd2-^ch8$wd1", True, "With cross-newline flag"),
-        ("wd2_-^ch8$wd1", True, "With both flags"),
-        ("r1wd1^ch4$ch2", True, "With movements"),
-        ("d1r2wd3_^ch5$wd1ch3", True, "Complex with movements"),
+        ("wd1%ch3", True, "Valid end trimmer"),
+        ("wd3^ch5%ch3", True, "Valid both trimmers"),
+        ("wd4_^wd1ch2%ch4", True, "With flags and complex trimmers"),
+        ("wd2-^ch8%wd1", True, "With cross-newline flag"),
+        ("wd2_-^ch8%wd1", True, "With both flags"),
+        ("r1wd1^ch4%ch2", True, "With movements"),
+        ("d1r2wd3_^ch5%wd1ch3", True, "Complex with movements"),
         ("wd1^ch2pg3", True, "With page spec"),
-        ("r1wd2_^ch3$ch4pg2-4mt2", True, "Full complex pattern"),
+        ("r1wd2_^ch3%ch4pg2-4mt2", True, "Full complex pattern"),
         ("wd1^ch5wd1nb2", True, "Multiple start trimmers"),
-        ("wd1$wd2ch3ln1", True, "Multiple end trimmers"),
-        ("wd1^ch2wd1$nb1ch3wd2", True, "Multiple both trimmers"),
+        ("wd1%wd2ch3ln1", True, "Multiple end trimmers"),
+        ("wd1^ch2wd1%nb1ch3wd2", True, "Multiple both trimmers"),
         
         # Backward compatibility
         ("r1wd1", True, "Basic Phase 2 pattern"),
@@ -87,15 +87,15 @@ def test_phase4_regex_patterns():
         
         # Invalid patterns that should be rejected
         ("wd1^", False, "Empty start trimmer"),
-        ("wd1$", False, "Empty end trimmer"),
+        ("wd1%", False, "Empty end trimmer (%)"),
         ("wd1^ch5$", False, "Valid start, empty end"),
-        ("wd1^$ch3", False, "Empty start, valid end"),
+        ("wd1^%ch3", False, "Empty start, valid end"),
         ("wd1^ch0", False, "Zero count in start trimmer"),
-        ("wd1$ch0", False, "Zero count in end trimmer"),
+        ("wd1%ch0", False, "Zero count in end trimmer"),
         ("wd1^ch", False, "Missing count in trimmer"),
         ("wd1^xy5", False, "Invalid trimmer type"),
         ("^ch5", False, "Missing base extraction"),
-        ("$ch3", False, "Missing base extraction"),
+        ("%ch3", False, "Missing base extraction"),
     ]
     
     successes = 0
@@ -170,11 +170,11 @@ def test_complete_pattern_parsing():
     pattern_examples = [
         # Valid patterns
         ("invoice=Invoice Number:r1wd1^ch4", True, "Invoice with start trimming"),
-        ("company=Company:r1wd3_^ch8$ch12", True, "Company with space exclusion and both-end trimming"),
+        ("company=Company:r1wd3_^ch8%ch12", True, "Company with space exclusion and both-end trimming"),
         ("amount=Total:r1nb1_^ch1", True, "Amount without currency symbol"),
-        ("ref=Reference:r1wd4_^wd2ch3$wd1pg2", True, "Complex reference with page specification"),
-        ("code=Code:r1wd1$nb1", True, "Code with numeric suffix removal"),
-        ("title=Title:u1ln1^ch5$ch3pg2-4mt2", True, "Multi-page title with character trimming"),
+        ("ref=Reference:r1wd4_^wd2ch3%wd1pg2", True, "Complex reference with page specification"),
+        ("code=Code:r1wd1%nb1", True, "Code with numeric suffix removal"),
+        ("title=Title:u1ln1^ch5%ch3pg2-4mt2", True, "Multi-page title with character trimming"),
         
         # Backward compatibility
         ("old_style=Invoice:r1wd1", True, "Phase 2 style pattern"),
@@ -185,7 +185,7 @@ def test_complete_pattern_parsing():
         ("invalid1=Keyword:wd1^", False, "Empty start trimmer"),
         ("invalid2=Keyword:wd1^ch0", False, "Zero count trimmer"),
         ("invalid3=Keyword:wd1^xy5", False, "Invalid trimmer type"),
-        ("invalid4=Keyword:wd1$", False, "Empty end trimmer"),
+        ("invalid4=Keyword:wd1%", False, "Empty end trimmer (%)"),
         ("invalid5=Keyword:^ch5", False, "Missing base extraction"),
     ]
     
@@ -231,27 +231,27 @@ def test_real_world_scenarios():
         },
         {
             'name': 'Company Name Extraction',
-            'pattern': 'r2wd1^ch11$ch4',
+            'pattern': 'r2wd1^ch11%ch4',
             'description': 'Extract core company name from merged text'
         },
         {
             'name': 'Currency Amount Cleanup',
-            'pattern': 'r2wd5_^ch1$ch3',
+            'pattern': 'r2wd5_^ch1%ch3',
             'description': 'Clean currency formatting'
         },
         {
             'name': 'Reference Code Processing',
-            'pattern': 'r2wd1^ch4$nb1',
+            'pattern': 'r2wd1^ch4%nb1',
             'description': 'Extract clean reference code'
         },
         {
             'name': 'Serial Number Extraction',
-            'pattern': 'r2wd1^ch2$nb1',
+            'pattern': 'r2wd1^ch2%nb1',
             'description': 'Extract core serial number'
         },
         {
             'name': 'Multi-Page Complex Pattern',
-            'pattern': 'd1r2wd3_^ch5$wd1ch3pg2-4mt2',
+            'pattern': 'd1r2wd3_^ch5%wd1ch3pg2-4mt2',
             'description': 'Complex multi-page pattern with trimming'
         }
     ]

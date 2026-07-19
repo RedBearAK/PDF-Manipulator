@@ -450,9 +450,10 @@ def test_end_to_end_workflow():
         
         # Step 2: Convert to enhanced format
         enhanced_patterns = []
-        for var_name, keyword, spec in parsed_patterns:
-            enhanced_pattern = processor.convert_to_enhanced_pattern(keyword, spec)
-            enhanced_patterns.append((var_name, enhanced_pattern))
+        for pattern_info in parsed_patterns:
+            enhanced_pattern = processor.convert_to_enhanced_pattern(
+                pattern_info['keyword'], pattern_info['extraction_spec'])
+            enhanced_patterns.append((pattern_info['variable_name'], enhanced_pattern))
         
         # Step 3: Generate template
         template = "{invoice}_{total}_extracted.pdf"

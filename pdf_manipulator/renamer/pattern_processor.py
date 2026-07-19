@@ -3,11 +3,14 @@ Enhanced compact pattern syntax processor with Phase 4 start/end trimming suppor
 File: pdf_manipulator/renamer/pattern_processor.py
 
 PHASE 4 UPDATES:
-- Start/end trimming system using ^ and $ symbols
+- Start/end trimming system using ^ and % symbols
+  ('%' rather than '$' so pattern strings survive double-quoted shell
+  arguments without expansion surprises)
 - Enhanced flag system with _ for space exclusion
 - Multiple trimmer operations per block
 - Backward compatible with all previous phases
 - Clean regex import from dedicated patterns module
+- Text extraction via the unified provider (core.text_extraction)
 """
 
 from pathlib import Path
@@ -19,8 +22,8 @@ from pdf_manipulator.renamer.renamer_regex_patterns import (
     STRAY_END_TRIMMER_RGX,
     PYTHON_IDENTIFIER_RGX
 )
+from pdf_manipulator.core.text_extraction import get_page_texts
 from pdf_manipulator.scraper.extractors.pattern_extractor import PatternExtractor
-from pdf_manipulator.scraper.processors.pypdf_processor import PyPDFProcessor
 from pdf_manipulator.scraper.extractors.trimming import (
     parse_trimmer_block, 
     apply_trimmers, 
@@ -44,12 +47,12 @@ class PatternProcessor:
     
     PHASE 4 ENHANCEMENTS:
     - Start trimming blocks: ^ch5wd1nb2 (trim chars, words, numbers from start)
-    - End trimming blocks: $wd2ch3ln1 (trim words, chars, lines from end)
+    - End trimming blocks: %wd2ch3ln1 (trim words, chars, lines from end)
     - Enhanced flag system: _ excludes spaces from extraction
     - Multiple operations per trimmer block processed sequentially
     - Comprehensive validation and error handling
     
-    Enhanced Syntax: [var=]keyword:movements+extraction_type+count[flags][^start_trimmers][$end_trimmers][pg<pages>][mt<matches>]
+    Enhanced Syntax: [var=]keyword:movements+extraction_type+count[flags][^start_trimmers][%end_trimmers][pg<pages>][mt<matches>]
     
     Core Movements (unchanged):
     - u/d + 1-99: up/down lines
@@ -70,11 +73,11 @@ class PatternProcessor:
     - ^wdN: Trim N words from start  
     - ^lnN: Trim N lines from start
     - ^nbN: Trim N numbers from start
-    - $chN: Trim N characters from end
-    - $wdN: Trim N words from end
-    - $lnN: Trim N lines from end
-    - $nbN: Trim N numbers from end
-    - Multiple trimmers: ^ch5wd1$nb2ch3
+    - %chN: Trim N characters from end
+    - %wdN: Trim N words from end
+    - %lnN: Trim N lines from end
+    - %nbN: Trim N numbers from end
+    - Multiple trimmers: ^ch5wd1%nb2ch3
     
     Page/Match Range Syntax (unchanged from Phase 3):
     - N: Specific number (pg3, mt2)
@@ -85,21 +88,20 @@ class PatternProcessor:
     
     Examples:
     - "Invoice:r1wd1^ch4" - Basic with start trimming
-    - "Company:r1wd3_^ch8$ch12" - Spaces excluded, both end trimming
+    - "Company:r1wd3_^ch8%ch12" - Spaces excluded, both end trimming
     - "Amount:r1nb1_^ch1" - Number without currency symbol
-    - "Reference:r1wd4_^wd2ch3$wd1pg2" - Complex trimming with page spec
+    - "Reference:r1wd4_^wd2ch3%wd1pg2" - Complex trimming with page spec
     """
     
     def __init__(self):
         self.extractor = PatternExtractor()
-        self.processor = PyPDFProcessor(suppress_warnings=True)
         
     def parse_pattern_string(self, pattern_str: str) -> tuple[str, str, dict]:
         """
         Parse full pattern string into variable name, keyword, and extraction spec.
         
         Args:
-            pattern_str: Full pattern like "invoice=Invoice Number:r1wd1_^ch4$ch2pg2-4mt2"
+            pattern_str: Full pattern like "invoice=Invoice Number:r1wd1_^ch4%ch2pg2-4mt2"
             
         Returns:
             Tuple of (variable_name, keyword, extraction_spec)
@@ -143,7 +145,7 @@ class PatternProcessor:
         Parse enhanced extraction specification with Phase 4 trimming support.
         
         Args:
-            spec: Enhanced spec like "r1wd1_^ch4$ch2pg2-4mt3-"
+            spec: Enhanced spec like "r1wd1_^ch4%ch2pg2-4mt3-"
             
         Returns:
             Dictionary with parsed movement, extraction, trimming, page, and match details
@@ -157,15 +159,15 @@ class PatternProcessor:
         if '^' in spec and not STRAY_START_TRIMMER_RGX.search(spec):
             raise CompactPatternError(f"Invalid '^' character without valid trimmer operations in: '{spec}'")
         
-        if '$' in spec and not STRAY_END_TRIMMER_RGX.search(spec):
-            raise CompactPatternError(f"Invalid '$' character without valid trimmer operations in: '{spec}'")
+        if '%' in spec and not STRAY_END_TRIMMER_RGX.search(spec):
+            raise CompactPatternError(f"Invalid '%' character without valid trimmer operations in: '{spec}'")
         
         # Match using the main compact pattern regex
         match = COMPACT_PATTERN_RGX.match(spec)
         if not match:
             raise CompactPatternError(
                 f"Invalid enhanced syntax: '{spec}'. "
-                f"Expected format: [movements][type][count][flags][^start_trimmers][$end_trimmers][pg<pages>][mt<matches>]"
+                f"Expected format: [movements][type][count][flags][^start_trimmers][%end_trimmers][pg<pages>][mt<matches>]"
             )
         
         groups = match.groups()
@@ -191,12 +193,12 @@ class PatternProcessor:
             except TrimmingError as e:
                 raise CompactPatternError(f"Invalid start trimmer block '^{start_block}': {e}")
         
-        if groups[6]:  # End trimmer block  
-            end_block = groups[6][1:]  # Remove $ prefix
+        if groups[6]:  # End trimmer block
+            end_block = groups[6][1:]  # Remove % prefix
             try:
                 end_trimmers = parse_trimmer_block(end_block)
             except TrimmingError as e:
-                raise CompactPatternError(f"Invalid end trimmer block '${end_block}': {e}")
+                raise CompactPatternError(f"Invalid end trimmer block '%{end_block}': {e}")
         
         # Parse page and match specifications
         page_spec = self._parse_range_spec_group(groups[7], 'page') if groups[7] else None
@@ -207,6 +209,7 @@ class PatternProcessor:
             'extract_type': extract_type,
             'extract_count': extract_count,
             'flags': flags,
+            'flexible': flags['flexible'],  # Top-level convenience/compat key
             'start_trimmers': start_trimmers,
             'end_trimmers': end_trimmers,
             'page_spec': page_spec,
@@ -373,7 +376,7 @@ class PatternProcessor:
                 'description': 'Extract invoice number, trim 4 characters from start'
             },
             'space_exclusion': {
-                'pattern': 'company=Company:r1wd3_^ch8$ch12',
+                'pattern': 'company=Company:r1wd3_^ch8%ch12',
                 'description': 'Extract company name, exclude spaces, trim both ends'
             },
             'currency_removal': {
@@ -381,85 +384,162 @@ class PatternProcessor:
                 'description': 'Extract amount, exclude spaces, remove currency symbol'
             },
             'complex_cleanup': {
-                'pattern': 'ref=Reference:r1wd4_^wd2ch3$wd1pg2',
+                'pattern': 'ref=Reference:r1wd4_^wd2ch3%wd1pg2',
                 'description': 'Complex reference cleanup with multi-level trimming'
             },
             'number_extraction': {
-                'pattern': 'code=Code:r1wd1$nb1',
+                'pattern': 'code=Code:r1wd1%nb1',
                 'description': 'Extract code, trim numeric suffix'
             },
             'multi_page_trimmed': {
-                'pattern': 'title=Title:u1ln1^ch5$ch3pg2-4mt2',
+                'pattern': 'title=Title:u1ln1^ch5%ch3pg2-4mt2',
                 'description': 'Multi-page title extraction with character trimming'
             }
         }
     
-    def process_pdf_with_patterns(self, pdf_path: Path, patterns: list[str]) -> dict:
+    def convert_to_enhanced_pattern(self, keyword: str, extraction_spec: dict) -> dict:
         """
-        Process PDF file with multiple patterns and return extracted data.
-        
+        Convert a parsed extraction spec into the enhanced pattern dict shape
+        that PatternExtractor methods consume directly.
+
+        Returns:
+            Dict with exactly the keys the extractor needs: keyword, movements,
+            extract_type, extract_count, flexible.
+        """
+        return {
+            'keyword': keyword,
+            'movements': extraction_spec.get('movements', []),
+            'extract_type': extraction_spec.get('extract_type', 'wd'),
+            'extract_count': extraction_spec.get('extract_count', 1),
+            'flexible': extraction_spec.get('flags', {}).get('flexible', False),
+        }
+
+    def extract_from_pdf(self, pdf_path: Path, variable_name: str, keyword: str,
+                            extraction_spec: dict, source_page: int = 1) -> dict:
+        """
+        Extract a single variable from a PDF using a parsed extraction spec.
+
+        This is the bridge FilenameGenerator uses: it runs the Phase 3
+        multi-page/multi-match extraction, then applies Phase 4 post-processing
+        (space exclusion flag, start/end trimmers) to the selected content.
+
         Args:
             pdf_path: Path to PDF file
-            patterns: List of pattern strings
-            
+            variable_name: Name of the template variable being filled
+            keyword: Keyword to search for
+            extraction_spec: Parsed spec dict from _parse_extraction_spec()
+            source_page: Fallback page when the spec carries no pg specification
+
         Returns:
-            Dictionary with extracted variable values
+            Result dictionary with 'success', 'selected_match', 'warnings',
+            'debug_info', 'variable_name' and 'keyword' keys.
         """
+        # Build the pattern dict the enhanced extractor expects
+        pattern = {
+            'keyword': keyword,
+            'movements': extraction_spec.get('movements', []),
+            'extract_type': extraction_spec.get('extract_type', 'wd'),
+            'extract_count': extraction_spec.get('extract_count', 1),
+            'flexible': extraction_spec.get('flags', {}).get('flexible', False),
+            'match_spec': extraction_spec.get('match_spec') or {'type': 'single', 'value': 1},
+        }
+
+        # Page spec from the pattern itself, else fall back to source_page
+        page_spec = extraction_spec.get('page_spec')
+        if page_spec is None:
+            page_spec = {'type': 'single', 'value': source_page}
+
+        result = self.extractor.extract_pattern_enhanced(pdf_path, pattern, page_spec)
+        result['variable_name'] = variable_name
+        result['keyword'] = keyword
+
+        if not result.get('success'):
+            return result
+
+        result['selected_match'] = self._post_process_content(
+            result.get('selected_match'), extraction_spec, result
+        )
+        return result
+
+    def _post_process_content(self, content, extraction_spec: dict, result: dict):
+        """
+        Apply Phase 4 post-processing (space exclusion, trimming) to content.
+
+        Handles both single-string matches and lists of matches (mt ranges).
+        Failures are downgraded to warnings so a bad trim never crashes a run.
+        """
+        if content is None or content == "No_Match":
+            return content
+
+        if isinstance(content, list):
+            return [self._post_process_content(item, extraction_spec, result)
+                    for item in content]
+
+        if not isinstance(content, str):
+            return content
+
+        flags = extraction_spec.get('flags', {})
+        if flags.get('exclude_spaces'):
+            content = content.replace(' ', '')
+
+        start_trimmers = extraction_spec.get('start_trimmers', [])
+        end_trimmers = extraction_spec.get('end_trimmers', [])
+
+        if start_trimmers or end_trimmers:
+            try:
+                content = apply_trimmers(content, start_trimmers, end_trimmers)
+            except TrimmingError as e:
+                result.setdefault('warnings', []).append(f"Trimming failed: {e}")
+
+        return content
+
+    def process_pdf_with_patterns(self, pdf_path: Path, patterns: list[str]) -> dict:
+        """
+        Process a PDF with multiple patterns and return extracted data.
+
+        Used by the standalone --scrape-text mode. Text comes through the
+        unified provider (sidecar text file if registered, else raw
+        pdfplumber, else pypdf).
+
+        Args:
+            pdf_path: Path to PDF file
+            patterns: List of pattern strings in Phase 4 compact syntax
+
+        Returns:
+            Dictionary mapping variable names to extraction result dicts
+            (same shape as extract_from_pdf results).
+        """
+        pdf_path = Path(pdf_path)
         if not pdf_path.exists():
             raise FileNotFoundError(f"PDF file not found: {pdf_path}")
-        
-        # Validate and parse patterns
+
+        # Validate and parse patterns (raises CompactPatternError on bad syntax)
         parsed_patterns = self.validate_pattern_list(patterns)
-        
-        # Extract text from PDF
-        try:
-            pdf_text = self.processor.extract_text_simple(pdf_path)
-        except Exception as e:
-            raise CompactPatternError(f"Failed to extract text from PDF: {e}")
-        
-        # Process each pattern
+
+        # Warm the shared text cache once for the whole document
+        get_page_texts(pdf_path)
+
         results = {}
         for pattern_info in parsed_patterns:
             var_name = pattern_info['variable_name']
             keyword = pattern_info['keyword']
             extraction_spec = pattern_info['extraction_spec']
-            
+
             try:
-                # Use PatternExtractor to extract content
-                extracted_value = self.extractor.extract_pattern_enhanced(
-                    pdf_path, 
-                    {
-                        'keyword': keyword,
-                        **extraction_spec
-                    }
+                results[var_name] = self.extract_from_pdf(
+                    pdf_path, var_name, keyword, extraction_spec
                 )
-                
-                # Apply trimming if specified
-                if extraction_spec.get('start_trimmers') or extraction_spec.get('end_trimmers'):
-                    if extracted_value and 'result' in extracted_value:
-                        content = extracted_value['result']
-                        
-                        # Apply space exclusion flag if set
-                        if extraction_spec.get('flags', {}).get('exclude_spaces'):
-                            content = content.replace(' ', '')
-                        
-                        # Apply trimming
-                        trimmed_content = apply_trimmers(
-                            content,
-                            extraction_spec.get('start_trimmers', []),
-                            extraction_spec.get('end_trimmers', [])
-                        )
-                        
-                        extracted_value['result'] = trimmed_content
-                
-                results[var_name] = extracted_value
-                
             except Exception as e:
                 results[var_name] = {
-                    'error': str(e),
-                    'pattern': pattern_info['original_pattern']
+                    'variable_name': var_name,
+                    'keyword': keyword,
+                    'success': False,
+                    'selected_match': f"Error: {e}",
+                    'warnings': [f"Extraction failed: {e}"],
+                    'debug_info': {'exception': str(e),
+                                    'pattern': pattern_info['original_pattern']},
                 }
-        
+
         return results
 
 

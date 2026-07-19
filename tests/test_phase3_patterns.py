@@ -319,8 +319,10 @@ def test_backward_compatibility():
         try:
             var_name, keyword, extraction_spec = processor.parse_pattern_string(pattern)
             
-            # Should not have page_spec or match_spec for Phase 2 patterns
-            if 'page_spec' in extraction_spec or 'match_spec' in extraction_spec:
+            # Phase 2 patterns must carry no page/match specification
+            # (the keys are always present; unused specs are None)
+            if extraction_spec.get('page_spec') is not None or \
+                    extraction_spec.get('match_spec') is not None:
                 console.print(f"  [red]✗ Phase 2 pattern '{pattern}' has Phase 3 specs[/red]")
                 continue
             

@@ -177,8 +177,8 @@ Examples:
     Debugging mode:
     %(prog)s file.pdf --dump-text --output raw_text.txt
 
-Enhanced Pattern Syntax (Phase 3):
-    Base syntax:        [var=]keyword:movements+type+count[-][pg<pages>][mt<matches>]
+Enhanced Pattern Syntax (Phase 4):
+    Base syntax:  [var=]keyword:movements+type+count[flags][^start_trim][%end_trim][pg<pages>][mt<matches>]
     
     Movements:          u/d + 1-99: up/down lines
                         l/r + 1-99: left/right words
@@ -187,19 +187,32 @@ Enhanced Pattern Syntax (Phase 3):
                         ln + 0-99: lines (0 = until end of document)  
                         nb + 0-99: numbers only (extracts numeric data from mixed content)
     
-    Page Specs (NEW):   pg3: page 3 only
+    Flags:              -: cross newlines during extraction (flexible)
+                        _: exclude spaces from extracted content (before trimming)
+    
+    Trimming (NEW):     ^chN/^wdN/^lnN/^nbN: trim N chars/words/lines/numbers from start
+                        %chN/%wdN/%lnN/%nbN: trim N chars/words/lines/numbers from end
+                        Multiple per block: "Company:r1wd3_^ch2wd1%ch3"
+                        ('%' not '$' so patterns are safe inside double quotes)
+    
+    Page Specs:         pg3: page 3 only
                         pg2-4: pages 2 through 4
                         pg3-: page 3 to end
                         pg-2: last 2 pages
                         pg0: all pages (debug mode)
     
-    Match Specs (NEW):  mt2: second match of keyword
+    Match Specs:        mt2: second match of keyword
                         mt1-3: matches 1 through 3
                         mt2-: match 2 to end
                         mt-2: last 2 matches
                         mt0: all matches (debug mode)
 
-Phase 3 Pattern Examples:
+Sidecar text (NEW):
+    %(prog)s file.pdf --text-file corrected.txt --extract-pages="contains:'KODIAK'"
+    Uses smart-pdf-ocr corrected text ("=== page N ===" markers) as the text
+    source for page selection, scrape patterns, and --dump-text.
+
+Pattern Examples:
     Basic patterns:
     %(prog)s invoice.pdf --extract-pages="1" \\
         --scrape-pattern="Invoice Number:r1wd1" \\
@@ -336,6 +349,11 @@ def main():
         help='File containing extraction patterns, one per line')
     patterns.add_argument('--pattern-source-page', type=int, default=1, metavar='N',
         help='Page number to extract patterns from (default: 1, overridden by pg specs)')
+    patterns.add_argument('--text-file', metavar='FILE',
+        help=('Sidecar text file to use as the text source instead of extracting from '
+            'the PDF. Expects the corrected text output of smart-pdf-ocr, with '
+            '"=== page N ===" markers. Applies to page selection patterns, scrape '
+            'patterns, and --dump-text. Single-PDF mode only.'))
 
     # NEW: Smart filename options
     naming = parser.add_argument_group('intelligent naming')
@@ -508,6 +526,19 @@ def main():
         console.print(f"[red]Error: {args.path} is not a valid file or directory[/red]")
         sys.exit(1)
 
+    # Register sidecar text file (smart-pdf-ocr corrected text) as the text source
+    if getattr(args, 'text_file', None):
+        if not is_file:
+            console.print("[red]Error: --text-file requires a single PDF path, not a folder[/red]")
+            sys.exit(1)
+        from pdf_manipulator.core.text_extraction import register_text_file
+        try:
+            register_text_file(args.path, Path(args.text_file))
+            console.print(f"[dim]Using sidecar text: {args.text_file}[/dim]")
+        except ValueError as e:
+            console.print(f"[red]Error: {e}[/red]")
+            sys.exit(1)
+
     # Handle different operation types
     if args.gs_fix or args.gs_batch_fix:
         handle_ghostscript_operations(args, is_file, is_folder)
@@ -648,11 +679,157 @@ def handle_ghostscript_operations(args: argparse.Namespace, is_file: bool, is_fo
 
 
 def handle_scraper_operations(args: argparse.Namespace, is_file: bool, is_folder: bool):
-    """Handle standalone scraper operations."""
-    console.print("[blue]Scraper operations not yet implemented in Phase 1[/blue]")
-    console.print("[dim]This will integrate the existing scraper CLI functionality[/dim]")
-    # TODO: Implement in Phase 2
-    sys.exit(0)
+    """
+    Handle standalone scraper operations: --dump-text and --scrape-text.
+
+    Both modes read text through the unified provider (sidecar text file if
+    registered via --text-file, else raw pdfplumber, else pypdf), so what they
+    see is exactly what page-selection patterns and smart renaming see.
+    """
+    from pdf_manipulator.core.text_extraction import get_page_texts
+
+    # Collect PDFs to process
+    if is_file:
+        pdf_paths = [args.path]
+    else:
+        pdf_paths = sorted(args.path.glob('*.pdf'))
+        if not pdf_paths:
+            console.print(f"[yellow]No PDF files found in {args.path}[/yellow]")
+            sys.exit(0)
+
+    if args.dump_text:
+        exit_code = _run_dump_text(pdf_paths, args.output)
+    else:
+        exit_code = _run_scrape_text(args, pdf_paths)
+
+    sys.exit(exit_code)
+
+
+def _run_dump_text(pdf_paths: list, output_file: str) -> int:
+    """
+    Dump page-by-page text for each PDF, to stdout or a file.
+
+    Returns:
+        0 when at least one PDF produced text, 1 otherwise.
+    """
+    from pdf_manipulator.core.text_extraction import get_page_texts, get_registered_text_file
+
+    output = open(output_file, 'w', encoding='utf-8') if output_file else sys.stdout
+    success_count = 0
+
+    try:
+        for pdf_path in pdf_paths:
+            try:
+                page_texts = get_page_texts(pdf_path)
+            except Exception as e:
+                console.print(f"[red]Error extracting text from {pdf_path.name}: {e}[/red]")
+                continue
+
+            sidecar = get_registered_text_file(pdf_path)
+            source_note = f" (from sidecar: {sidecar.name})" if sidecar else ""
+
+            print(f"\n{'=' * 60}", file=output)
+            print(f"TEXT DUMP: {pdf_path}{source_note}", file=output)
+            print(f"{'=' * 60}", file=output)
+            pages_with_text = sum(1 for text in page_texts if text.strip())
+            print(f"Total pages: {len(page_texts)}", file=output)
+            print(f"Extracted: {pages_with_text}/{len(page_texts)} pages with text\n", file=output)
+
+            for page_num, page_text in enumerate(page_texts, 1):
+                print(f"--- PAGE {page_num} ---", file=output)
+                if page_text.strip():
+                    print(page_text, file=output)
+                else:
+                    print("(No text found on this page)", file=output)
+                print(file=output)
+
+            if pages_with_text:
+                success_count += 1
+    finally:
+        if output_file:
+            output.close()
+            console.print(f"[green]✓ Text dump written to {output_file}[/green]")
+
+    return 0 if success_count > 0 else 1
+
+
+def _run_scrape_text(args: argparse.Namespace, pdf_paths: list) -> int:
+    """
+    Extract pattern data from each PDF and write a TSV of the results.
+
+    Columns are 'filename' followed by one column per pattern variable, in
+    pattern order. Failed extractions appear as their failure marker text
+    (e.g. "No_Match") so rows stay aligned for spreadsheet cleaning.
+
+    Returns:
+        0 on success, 1 when no patterns were given or nothing extracted.
+    """
+    from pdf_manipulator.scraper.output.tsv_writer import TSVWriter
+    from pdf_manipulator.renamer.pattern_processor import PatternProcessor, CompactPatternError
+
+    patterns = list(args.scrape_pattern) if args.scrape_pattern else []
+    if args.scrape_patterns_file:
+        try:
+            patterns.extend(_load_patterns_file(args.scrape_patterns_file))
+        except OSError as e:
+            console.print(f"[red]Error reading patterns file: {e}[/red]")
+            return 1
+
+    if not patterns:
+        console.print("[red]Error: --scrape-text requires --scrape-pattern or "
+                        "--scrape-patterns-file[/red]")
+        return 1
+
+    processor = PatternProcessor()
+
+    # Validate once up front so a syntax error is reported before any PDF work
+    try:
+        parsed = processor.validate_pattern_list(patterns)
+    except CompactPatternError as e:
+        console.print(f"[red]Invalid pattern syntax: {e}[/red]")
+        return 1
+
+    variable_names = [info['variable_name'] for info in parsed]
+    headers = ['filename'] + variable_names
+    rows = []
+
+    for pdf_path in pdf_paths:
+        console.print(f"[blue]Scraping: {pdf_path.name}[/blue]")
+        try:
+            results = processor.process_pdf_with_patterns(pdf_path, patterns)
+        except Exception as e:
+            console.print(f"[red]  Error: {e}[/red]")
+            rows.append([pdf_path.name] + [f"Error: {e}"] * len(variable_names))
+            continue
+
+        row = [pdf_path.name]
+        for var_name in variable_names:
+            result = results.get(var_name, {})
+            value = result.get('selected_match', "No_Match")
+            if isinstance(value, list):
+                value = '; '.join(str(item) for item in value)
+            row.append(str(value))
+
+            for warning in result.get('warnings', []):
+                console.print(f"[yellow]  {var_name}: {warning}[/yellow]")
+        rows.append(row)
+
+    output_file = args.output or 'extracted_data.tsv'
+    writer = TSVWriter()
+    writer.write_results(output_file, headers, rows)
+    console.print(f"[green]✓ Extracted {len(rows)} row(s) to {output_file}[/green]")
+    return 0
+
+
+def _load_patterns_file(patterns_file: str) -> list[str]:
+    """Load pattern strings from a file, skipping blanks and comment lines."""
+    patterns = []
+    with open(patterns_file, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith('#'):
+                patterns.append(line)
+    return patterns
 
 
 def extract_enhanced_args(args) -> dict:

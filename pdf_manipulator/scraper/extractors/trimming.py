@@ -12,15 +12,13 @@ from pdf_manipulator.scraper.extractors.extractor_regex_patterns import (
     NUMBER_DETECTION_RGX
 )
 
-from typing import List, Tuple, Union
-
 
 class TrimmingError(Exception):
     """Exception for trimming operation errors."""
     pass
 
 
-def parse_trimmer_block(trimmer_string: str) -> List[Tuple[str, int]]:
+def parse_trimmer_block(trimmer_string: str) -> list[tuple[str, int]]:
     """
     Parse trimmer block into list of (type, count) operations.
     
@@ -182,8 +180,8 @@ def _trim_numbers_from_end(content: str, count: int, number_pattern) -> str:
     return content[:trim_from_position]
 
 
-def apply_trimmers(content: str, start_trimmers: List[Tuple[str, int]], 
-                  end_trimmers: List[Tuple[str, int]]) -> str:
+def apply_trimmers(content: str, start_trimmers: list[tuple[str, int]],
+                    end_trimmers: list[tuple[str, int]]) -> str:
     """
     Apply start and end trimming operations to content.
     
@@ -219,8 +217,8 @@ def apply_trimmers(content: str, start_trimmers: List[Tuple[str, int]],
     return result
 
 
-def validate_trimming_feasibility(content: str, start_trimmers: List[Tuple[str, int]], 
-                                end_trimmers: List[Tuple[str, int]]) -> List[str]:
+def validate_trimming_feasibility(content: str, start_trimmers: list[tuple[str, int]],
+                                    end_trimmers: list[tuple[str, int]]) -> list[str]:
     """
     Check if trimming operations are feasible without over-trimming.
     

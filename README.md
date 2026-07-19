@@ -18,6 +18,56 @@ PDF Manipulator is a powerful command-line tool that goes beyond simple page ext
 - **Batch Processing**: Handle entire folders with intelligent automation
 - **Multiple Output Modes**: Single document, separate files, or respect logical groupings
 
+## 🔤 Unified Text Extraction and Smart-OCR Sidecar Text
+
+All text-based features (page selection patterns, scrape patterns, `--dump-text`)
+read page text through a single unified provider, so a keyword that selects a
+page is always visible to a scrape pattern on that same page. The provider uses
+raw pdfplumber (best line reconstruction for OCR'd documents) with a pypdf
+fallback, cached per document.
+
+For scanned documents processed with the separate **smart-pdf-ocr** tool, the
+corrected text output can be supplied directly as the text source:
+
+```bash
+# Use smart-pdf-ocr corrected text ("=== page N ===" markers) instead of PDF extraction
+pdf-manipulator scan.pdf --text-file corrected.txt --extract-pages="contains:'KODIAK'"
+pdf-manipulator scan.pdf --text-file corrected.txt --scrape-text \
+    --scrape-pattern="invoice=No:wd1" --output data.tsv
+```
+
+The smart-pdf-ocr searchable PDFs (`--pdf-out`) also work directly as input,
+since their corrected text layer is extracted like any other text.
+
+## ✂️ Phase 4 Pattern Trimming
+
+Scrape patterns support start/end trimming for precise cleanup of extracted
+content. End trimmers use `%` (not `$`) so patterns are safe inside
+double-quoted shell arguments:
+
+```bash
+# "INV-2024-001-DRAFT" -> "INV-2024-001"  (trim 6 chars from the end)
+pdf-manipulator file.pdf --scrape-text --scrape-pattern="invoice=Invoice Number:wd1%ch6"
+
+# Trim words/chars/lines/numbers from either end, multiple per block
+#   ^chN ^wdN ^lnN ^nbN   from the start
+#   %chN %wdN %lnN %nbN   from the end
+pdf-manipulator file.pdf --scrape-text --scrape-pattern="ref=Reference:r1wd4_^wd1%ch3"
+```
+
+## 📊 Standalone Scraper Modes
+
+```bash
+# Dump page-by-page text (debugging; uses the unified provider)
+pdf-manipulator file.pdf --dump-text --output raw.txt
+
+# Extract pattern data to TSV (one row per PDF, one column per variable)
+pdf-manipulator invoices/ --scrape-text \
+    --scrape-pattern="invoice=No:wd1" \
+    --scrape-pattern="date=Invoice Date:wd1" \
+    --output extracted_data.tsv
+```
+
 ## 📦 Installation
 
 ```bash
