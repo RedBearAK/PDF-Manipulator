@@ -209,11 +209,29 @@ def test_sidecar_text_source():
         result3 = _run_cli([str(workdir), '--dump-text', '--text-file', str(sidecar)], workdir)
         ok_folder_rejected = result3.returncode != 0
 
+        # ROUND TRIP: dump the PDF's text, "hand-correct" it, feed it back.
+        # The dump uses --- PAGE N --- markers; the sidecar parser must
+        # accept them so this workflow needs no marker conversion.
+        dump_path = workdir / "roundtrip.txt"
+        _run_cli([str(pdf_path), '--dump-text', '--output', str(dump_path)], workdir)
+        corrected = dump_path.read_text(encoding='utf-8').replace(
+            'INV-2024-001-DRAFT', 'INV-2024-001-FINAL')
+        dump_path.write_text(corrected, encoding='utf-8')
+        result4 = _run_cli([
+            str(pdf_path), '--scrape-text', '--text-file', str(dump_path),
+            '--scrape-pattern', 'invoice=Invoice Number:wd1',
+            '--output', str(workdir / 'rt.tsv'),
+        ], workdir)
+        rt_content = (workdir / 'rt.tsv').read_text(encoding='utf-8') \
+            if (workdir / 'rt.tsv').exists() else ""
+        ok_roundtrip = result4.returncode == 0 and 'INV-2024-001-FINAL' in rt_content
+
     checks = [
         (ok_sidecar_text, "dump shows sidecar text"),
         (ok_not_pdf_text, "dump excludes PDF-extracted text"),
         (ok_scrape, "scrape pattern matched against sidecar text"),
         (ok_folder_rejected, "--text-file with a folder is rejected"),
+        (ok_roundtrip, "dump -> correct -> sidecar round trip works"),
     ]
 
     passed = 0

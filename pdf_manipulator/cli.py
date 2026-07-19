@@ -351,9 +351,10 @@ def main():
         help='Page number to extract patterns from (default: 1, overridden by pg specs)')
     patterns.add_argument('--text-file', metavar='FILE',
         help=('Sidecar text file to use as the text source instead of extracting from '
-            'the PDF. Expects the corrected text output of smart-pdf-ocr, with '
-            '"=== page N ===" markers. Applies to page selection patterns, scrape '
-            'patterns, and --dump-text. Single-PDF mode only.'))
+            'the PDF. Accepts "=== page N ===" (smart-pdf-ocr) or "--- PAGE N ---" '
+            '(--dump-text) page markers, so dumped text can be corrected and fed '
+            'back in. Applies to page selection patterns, scrape patterns, and '
+            '--dump-text. Single-PDF mode only.'))
 
     # NEW: Smart filename options
     naming = parser.add_argument_group('intelligent naming')

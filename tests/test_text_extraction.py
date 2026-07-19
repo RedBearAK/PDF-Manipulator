@@ -80,6 +80,25 @@ def test_sidecar_parsing():
     checks.append((gap_pages[0] == "" and gap_pages[1] == "second", "gap: page order honored"))
     checks.append((gap_pages[4] == "fifth", "gap: page 5 at index 4"))
 
+    # The --dump-text marker style parses identically
+    dump_style = "--- PAGE 1 ---\nfirst page\n--- PAGE 2 ---\nsecond page\n"
+    dump_pages = parse_sidecar_text(dump_style)
+    checks.append((len(dump_pages) == 2 and dump_pages[1] == "second page",
+                    "--- PAGE N --- dump style accepted"))
+
+    # Mixed fence styles in one file are tolerated (hand-edited dumps)
+    mixed = "=== page 1 ===\none\n--- PAGE 2 ---\ntwo\n===== page 3 -----\nthree\n"
+    mixed_pages = parse_sidecar_text(mixed)
+    checks.append((mixed_pages == ["one", "two", "three"],
+                    "mixed and long fences tolerated"))
+
+    # Content lines with dashes must NOT be mistaken for markers
+    dashy = "=== page 1 ===\n--- not a marker ---\n----------\nreal content\n"
+    dashy_pages = parse_sidecar_text(dashy)
+    checks.append((len(dashy_pages) == 1 and "real content" in dashy_pages[0]
+                    and "not a marker" in dashy_pages[0],
+                    "dashed content lines are not markers"))
+
     # No markers at all -> empty list (register_text_file uses this to reject)
     checks.append((parse_sidecar_text("just some text") == [], "no markers -> empty list"))
 

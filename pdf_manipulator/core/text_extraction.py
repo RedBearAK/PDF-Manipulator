@@ -12,10 +12,10 @@ the text on the very same page.
 
 Text sources, in priority order:
 
-1. Registered sidecar text file (the corrected text dump produced by the
-   separate smart-pdf-ocr tool, with "=== page N ===" markers). When a sidecar
-   is registered for a PDF, its text is used verbatim and no PDF extraction
-   happens at all.
+1. Registered sidecar text file: a per-page text dump with marker lines
+   in either style -- "=== page N ===" (smart-pdf-ocr) or "--- PAGE N ---"
+   (this tool's own --dump-text). When a sidecar is registered for a PDF,
+   its text is used verbatim and no PDF extraction happens at all.
 2. Raw pdfplumber extract_text(). Chosen deliberately over the tuned
    PDFPlumberProcessor: character-position line reconstruction keeps lines like
    "Place of receipt VALDEZ, AK" intact, and the adaptive spacing tuning can
@@ -42,10 +42,13 @@ except ImportError:
     PDFPLUMBER_AVAILABLE = False
 
 
-# Sidecar page marker produced by smart-pdf-ocr: "=== page 1 ==="
-# The marker contains a space and the word "page", so it cannot collide with
-# extracted content like "City, ST" or "XXX/YYY" port pairs.
-SIDECAR_PAGE_MARKER_RGX = re.compile(r'^===\s+page\s+(\d+)\s+===\s*$', re.IGNORECASE)
+# Sidecar page markers. Both known styles are accepted -- smart-pdf-ocr's
+# "=== page 1 ===" and this tool's own --dump-text "--- PAGE 1 ---" -- plus
+# any 3+ run of = or - as the fences (mixed fences tolerated), so dumped
+# text can be hand-corrected and fed straight back in. The marker requires
+# the literal word "page" and a number between fences, so it cannot collide
+# with extracted content like "City, ST" or "XXX/YYY" port pairs.
+SIDECAR_PAGE_MARKER_RGX = re.compile(r'^[=\-]{3,}\s+page\s+(\d+)\s+[=\-]{3,}\s*$', re.IGNORECASE)
 
 
 # Cache of extracted page texts. Key: resolved PDF path string.
@@ -73,8 +76,10 @@ def register_text_file(pdf_path: Path, text_path: Path):
     """
     Register a sidecar text file as the text source for a PDF.
 
-    The sidecar is expected to be the corrected text output of the smart-pdf-ocr
-    tool, using "=== page N ===" markers to separate pages. Once registered, all
+    The sidecar is a per-page text dump using marker lines to separate
+    pages. Both "=== page N ===" (smart-pdf-ocr) and "--- PAGE N ---"
+    (this tool's --dump-text) styles are accepted, so dumped text can be
+    hand-corrected and fed straight back in. Once registered, all
     text-based operations (page selection patterns, scrape patterns, text dumps)
     read from the sidecar instead of extracting from the PDF.
 
@@ -92,8 +97,9 @@ def register_text_file(pdf_path: Path, text_path: Path):
     pages = parse_sidecar_text(text_path.read_text(encoding='utf-8'))
     if not pages:
         raise ValueError(
-            f"Sidecar text file has no '=== page N ===' markers: {text_path}\n"
-            f"Expected the corrected text output of smart-pdf-ocr."
+            f"Sidecar text file has no page markers: {text_path}\n"
+            f"Expected '=== page N ===' (smart-pdf-ocr) or "
+            f"'--- PAGE N ---' (--dump-text) marker lines."
         )
 
     key = _cache_key(pdf_path)
@@ -109,9 +115,10 @@ def get_registered_text_file(pdf_path: Path):
 
 def parse_sidecar_text(text: str) -> list[str]:
     """
-    Parse a smart-pdf-ocr corrected text dump into per-page texts.
+    Parse a per-page text dump into per-page texts.
 
-    Pages are delimited by "=== page N ===" marker lines. Page numbers in the
+    Pages are delimited by marker lines in either known style
+    ("=== page N ===" or "--- PAGE N ---"; any 3+ fence of = or - works). Page numbers in the
     markers are honored: gaps become empty pages, so page 5 of the sidecar is
     always index 4 of the returned list even if pages 2-4 are missing.
 

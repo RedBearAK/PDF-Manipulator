@@ -773,10 +773,12 @@ Build a library of these in a patterns file
 
 ### Sidecar text files
 
-If the OCR step produced a corrected text dump (with `=== page N ===`
-markers), you can hand it to the tool directly and skip PDF text extraction
-entirely — the sidecar becomes the text source for selection, scraping, and
-dumping alike:
+If the OCR step produced a corrected text dump, hand it to the tool
+directly and skip PDF text extraction entirely — the sidecar becomes the
+text source for selection, scraping, and dumping alike. Both marker styles
+are accepted: `=== page N ===` (smart-pdf-ocr) and `--- PAGE N ---` (this
+tool's own `--dump-text`), which enables a full round trip: dump the text,
+hand-correct it, feed it back with `--text-file`.
 
 ```bash
 pdf-manipulator scan.pdf --text-file corrected.txt \
