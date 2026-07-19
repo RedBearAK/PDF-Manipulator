@@ -92,6 +92,26 @@ def get_ordered_pages_from_groups(groups: list, fallback_pages: set = None,
     return ordered_pages
 
 
+def _generate_smart_output_path(generator, pdf_path: Path, page_desc: str,
+                                patterns: list, template: str,
+                                source_page: int) -> Path:
+    """
+    Generate one output path via smart naming, with visible fallback warnings.
+
+    Used by all three extraction modes. Pattern extraction is read-only, so
+    naming ALWAYS performs real extraction -- dry runs preview the actual
+    output names instead of PREVIEW_* placeholders. Fallback to simple
+    naming never crashes an extraction run.
+    """
+    output_path, naming_info = generator.generate_smart_filename(
+        pdf_path, page_desc, patterns, template, source_page, dry_run=False
+    )
+    if naming_info.get('fallback_used'):
+        for err in naming_info.get('extraction_errors', []):
+            console.print(f"[yellow]Smart naming fallback: {err}[/yellow]")
+    return output_path
+
+
 # def extract_pages(pdf_path: Path, page_range: str, patterns: list[str] = None,
 #                     template: str = None, source_page: int = 1,
 #                     dry_run: bool = False, dedup_strategy: str = 'strict',
@@ -161,13 +181,10 @@ def extract_pages(*args, **kwargs) -> tuple[Path, float]:
         
         # Smart naming when patterns and a template are supplied; else simple naming
         if patterns and template:
-            generator = FilenameGenerator()
-            output_path, naming_info = generator.generate_smart_filename(
-                pdf_path, range_desc, patterns, template, source_page, dry_run
+            output_path = _generate_smart_output_path(
+                FilenameGenerator(), pdf_path, range_desc,
+                patterns, template, source_page
             )
-            if naming_info.get('fallback_used'):
-                for err in naming_info.get('extraction_errors', []):
-                    console.print(f"[yellow]Smart naming fallback: {err}[/yellow]")
         else:
             output_path = generate_extraction_filename(
                 pdf_path, range_desc, 'single', use_timestamp, custom_prefix
@@ -301,6 +318,7 @@ def extract_pages_grouped(*args, **kwargs) -> list[tuple[Path, float]]:
             raise ValueError("No groups remaining after deduplication")
         
         output_files = []
+        smart_generator = FilenameGenerator() if (patterns and template) else None
         
         for group_idx, group in enumerate(processed_groups):
             # FIXED: Handle both PageGroup objects and raw lists robustly
@@ -327,8 +345,18 @@ def extract_pages_grouped(*args, **kwargs) -> list[tuple[Path, float]]:
                 safe_range = range_desc.replace('-', '_').replace(',', '_')
                 group_desc = f"pages_{safe_range}"
             
-            # Use consistent filename generation
-            output_path = generate_extraction_filename(pdf_path, group_desc, 'grouped', use_timestamp, custom_prefix)
+            if patterns and template:
+                # Per-group smart naming: source_page is the group's FIRST
+                # page (in the group's own order), so patterns without pg
+                # specs read from the start of each group's document
+                output_path = _generate_smart_output_path(
+                    smart_generator, pdf_path, group_desc,
+                    patterns, template, group_pages[0]
+                )
+            else:
+                output_path = generate_extraction_filename(
+                    pdf_path, group_desc, 'grouped', use_timestamp, custom_prefix
+                )
             
             # Handle conflicts and dry run for this group
             resolved_output_path = handle_group_conflicts_and_dryrun(output_path, group_idx, group_pages)
@@ -430,12 +458,24 @@ def extract_pages_separate(*args, **kwargs) -> list[tuple[Path, float]]:
         
         output_files = []
         
+        smart_generator = FilenameGenerator() if (patterns and template) else None
+
         for page_num in ordered_pages:
-            # Generate filename for this page using existing simple logic
             page_desc = f"page{page_num:02d}"
-            output_path = generate_extraction_filename(
-                pdf_path, page_desc, 'separate', use_timestamp, custom_prefix
-            )
+            if smart_generator:
+                # Per-page smart naming: source_page is THE PAGE BEING
+                # EXTRACTED, so patterns without pg specs read each page's own
+                # content (each invoice page names itself). Patterns WITH
+                # explicit pg specs keep their document-level pages (e.g. a
+                # shared batch date from page 1).
+                output_path = _generate_smart_output_path(
+                    smart_generator, pdf_path, page_desc,
+                    patterns, template, page_num
+                )
+            else:
+                output_path = generate_extraction_filename(
+                    pdf_path, page_desc, 'separate', use_timestamp, custom_prefix
+                )
             
             # Handle conflict resolution for this page
             if not dry_run:
