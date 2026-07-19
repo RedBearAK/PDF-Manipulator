@@ -19,6 +19,9 @@ def create_mock_args(**kwargs):
     # Set default values
     defaults = {
         'batch': False,
+        # Explicit value so old-vs-new comparisons test access structure,
+        # not the old buggy default (False) that the flattened fix corrected
+        'interactive': True,
         'preview': False,
         'conflicts': 'ask',
         'dedup': None,

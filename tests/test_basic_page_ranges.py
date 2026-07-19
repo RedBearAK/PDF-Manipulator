@@ -14,7 +14,7 @@ from pathlib import Path
 # Add the project root to Python path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
-from pdf_manipulator.core.parser import parse_page_range
+from opctx_test_helpers import parse_with_context
 
 from test_pdf_utils import create_test_pdf, cleanup_test_pdfs
 
@@ -55,7 +55,7 @@ def test_single_pages():
     
     for range_str, total_pages, expected_pages, description in test_cases:
         try:
-            pages, desc, groups = parse_page_range(range_str, total_pages)
+            pages, desc, groups = parse_with_context(range_str, total_pages)
             
             if pages == expected_pages:
                 print(f"✓ {description}: '{range_str}' → {sorted(pages)}")
@@ -88,7 +88,7 @@ def test_ranges():
     
     for range_str, total_pages, expected_pages, description in test_cases:
         try:
-            pages, desc, groups = parse_page_range(range_str, total_pages)
+            pages, desc, groups = parse_with_context(range_str, total_pages)
             
             if pages == expected_pages:
                 print(f"✓ {description}: '{range_str}' → {sorted(pages)}")
@@ -119,7 +119,7 @@ def test_open_ranges():
     
     for range_str, total_pages, expected_pages, description in test_cases:
         try:
-            pages, desc, groups = parse_page_range(range_str, total_pages)
+            pages, desc, groups = parse_with_context(range_str, total_pages)
             
             if pages == expected_pages:
                 print(f"✓ {description}: '{range_str}' → {sorted(pages)}")
@@ -152,7 +152,7 @@ def test_first_last():
     
     for range_str, total_pages, expected_pages, description in test_cases:
         try:
-            pages, desc, groups = parse_page_range(range_str, total_pages)
+            pages, desc, groups = parse_with_context(range_str, total_pages)
             
             if pages == expected_pages:
                 print(f"✓ {description}: '{range_str}' → {sorted(pages)}")
@@ -184,7 +184,7 @@ def test_slicing():
     
     for range_str, total_pages, expected_pages, description in test_cases:
         try:
-            pages, desc, groups = parse_page_range(range_str, total_pages)
+            pages, desc, groups = parse_with_context(range_str, total_pages)
             
             if pages == expected_pages:
                 print(f"✓ {description}: '{range_str}' → {sorted(pages)}")
@@ -216,7 +216,7 @@ def test_multiple_ranges():
     
     for range_str, total_pages, expected_pages, description in test_cases:
         try:
-            pages, desc, groups = parse_page_range(range_str, total_pages)
+            pages, desc, groups = parse_with_context(range_str, total_pages)
             
             if pages == expected_pages:
                 print(f"✓ {description}: '{range_str}' → {sorted(pages)}")
@@ -245,7 +245,7 @@ def test_special_cases():
     
     for range_str, total_pages, expected_pages, description in test_cases:
         try:
-            pages, desc, groups = parse_page_range(range_str, total_pages)
+            pages, desc, groups = parse_with_context(range_str, total_pages)
             
             if pages == expected_pages:
                 print(f"✓ {description}: '{range_str}' → {sorted(pages)}")
@@ -267,7 +267,9 @@ def test_error_cases():
     test_cases = [
         ("0", 10, "Page 0 (invalid)"),
         ("11", 10, "Page beyond range"),
-        ("5-3", 10, "Invalid range (backwards)"),
+        # NOTE: "5-3" removed - backwards ranges are now the deliberate
+        # reverse-range feature (5-3 extracts [5, 4, 3]); see
+        # test_reverse_ranges.py and test_numeric_reordering.py
         ("", 10, "Empty string"),
         ("abc", 10, "Non-numeric"),
     ]
@@ -277,7 +279,7 @@ def test_error_cases():
     
     for range_str, total_pages, description in test_cases:
         try:
-            pages, desc, groups = parse_page_range(range_str, total_pages)
+            pages, desc, groups = parse_with_context(range_str, total_pages)
             print(f"✗ {description}: '{range_str}' → Should have failed but got {sorted(pages)}")
         except Exception as e:
             print(f"✓ {description}: '{range_str}' → Correctly failed: {type(e).__name__}")

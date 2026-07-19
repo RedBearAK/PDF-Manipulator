@@ -59,15 +59,20 @@ def extract_with_pdfplumber(pdf_path, page_num):
         return None, str(e)
 
 
-def extract_with_tuned_pdfplumber(pdf_path, page_num):
-    """Extract text using the TUNED pdfplumber processor (what patterns.py now uses)."""
+def extract_with_unified_provider(pdf_path, page_num):
+    """
+    Extract text via the unified provider (what ALL subsystems now use).
+
+    Formerly compared against the tuned PDFPlumberProcessor from the old
+    simple_pdf_scraper package, which was removed; the unified provider in
+    core.text_extraction (raw pdfplumber with pypdf fallback, plus sidecar
+    support) replaced every extraction path.
+    """
     try:
-        from simple_pdf_scraper.processors.pdfplumber_processor import PDFPlumberProcessor
-        processor = PDFPlumberProcessor()
-        text = processor.extract_page(pdf_path, page_num)
+        from pdf_manipulator.core.text_extraction import get_page_text, clear_text_cache
+        clear_text_cache()  # Debug tool: always re-extract fresh
+        text = get_page_text(pdf_path, page_num)
         return text, None
-    except ImportError:
-        return None, "PDFPlumberProcessor not available"
     except Exception as e:
         return None, str(e)
 
@@ -122,7 +127,7 @@ def compare_page(pdf_path, page_num, test_pattern=None):
     # Extract with both methods
     pypdf_text, pypdf_err = extract_with_pypdf(pdf_path, page_num)
     plumber_text, plumber_err = extract_with_pdfplumber(pdf_path, page_num)
-    tuned_text, tuned_err = extract_with_tuned_pdfplumber(pdf_path, page_num)
+    tuned_text, tuned_err = extract_with_unified_provider(pdf_path, page_num)
     
     # Find the relevant line in each
     pypdf_line = find_place_of_receipt_line(pypdf_text) if pypdf_text else None
@@ -151,7 +156,7 @@ def compare_page(pdf_path, page_num, test_pattern=None):
         if plumber_text:
             print(f"  (Full text has {len(plumber_text)} chars, {len(plumber_text.splitlines())} lines)")
     
-    print("\nTUNED PDFPLUMBER (what patterns.py uses):")
+    print("\nUNIFIED PROVIDER (what patterns.py uses):")
     if tuned_err:
         print(f"  Error: {tuned_err}")
     elif tuned_line:

@@ -244,7 +244,9 @@ first 3
             try:
                 parser = PageRangeParser(total_pages=50, pdf_path=mock_pdf)
                 pages_set, desc, groups = parser.parse(range_string)
-                actual_pages = get_ordered_pages_from_groups(groups, pages_set)
+                # dedup='none': these expectations verify expansion ORDER and
+                # include cross-spec duplicates; dedup has its own tests
+                actual_pages = get_ordered_pages_from_groups(groups, pages_set, 'none')
                 
                 if actual_pages == expected_pages:
                     print(f"✓ {description}: {actual_pages}")

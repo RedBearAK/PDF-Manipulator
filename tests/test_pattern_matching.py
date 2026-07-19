@@ -14,7 +14,7 @@ from pathlib import Path
 # Add the project root to Python path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
-from pdf_manipulator.core.parser import parse_page_range
+from opctx_test_helpers import parse_with_context
 
 from test_pdf_utils import create_test_pdf, cleanup_test_pdfs
 
@@ -68,10 +68,10 @@ def test_pattern_detection():
     for range_str, should_need_pdf, description in test_cases:
         try:
             # Test without PDF path
-            pages_no_pdf, desc_no_pdf, groups_no_pdf = parse_page_range(range_str, 10)
+            pages_no_pdf, desc_no_pdf, groups_no_pdf = parse_with_context(range_str, 10)
             
             # Test with PDF path  
-            pages_with_pdf, desc_with_pdf, groups_with_pdf = parse_page_range(range_str, 10, MOCK_PDF_PATH)
+            pages_with_pdf, desc_with_pdf, groups_with_pdf = parse_with_context(range_str, 10, MOCK_PDF_PATH)
             
             if should_need_pdf:
                 # Pattern should behave differently with PDF path
@@ -133,7 +133,7 @@ def test_pattern_syntax():
     for range_str, description in test_cases:
         try:
             # This will fail during PDF analysis but should parse correctly
-            pages, desc, groups = parse_page_range(range_str, 10, MOCK_PDF_PATH)
+            pages, desc, groups = parse_with_context(range_str, 10, MOCK_PDF_PATH)
             
             # If we get here, the parsing worked (even if PDF analysis failed)
             print(f"✓ {description}: '{range_str}' → Syntax OK")
@@ -176,7 +176,7 @@ def test_pattern_offsets():
     
     for range_str, description in test_cases:
         try:
-            pages, desc, groups = parse_page_range(range_str, 10, MOCK_PDF_PATH)
+            pages, desc, groups = parse_with_context(range_str, 10, MOCK_PDF_PATH)
             print(f"✓ {description}: '{range_str}' → Syntax OK")
             passed += 1
             
@@ -213,7 +213,7 @@ def test_invalid_patterns():
     
     for range_str, description in test_cases:
         try:
-            pages, desc, groups = parse_page_range(range_str, 10, MOCK_PDF_PATH)
+            pages, desc, groups = parse_with_context(range_str, 10, MOCK_PDF_PATH)
             print(f"✗ {description}: '{range_str}' → Should have failed but didn't")
             
         except ValueError as e:
@@ -249,7 +249,7 @@ def test_quoted_strings():
     
     for range_str, description in test_cases:
         try:
-            pages, desc, groups = parse_page_range(range_str, 10, MOCK_PDF_PATH)
+            pages, desc, groups = parse_with_context(range_str, 10, MOCK_PDF_PATH)
             print(f"✓ {description}: '{range_str}' → Syntax OK")
             passed += 1
             

@@ -23,6 +23,7 @@ from io import StringIO
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
+sys.path.insert(0, str(project_root / "tests"))
 
 from pdf_manipulator.cli import extract_enhanced_args
 from pdf_manipulator.core.operations import extract_pages, extract_pages_grouped, extract_pages_separate
@@ -311,12 +312,12 @@ class ComprehensiveIntegrationTests:
                 print(f"    Testing {strategy} strategy...")
                 
                 # First, do a dry run to see what the actual filename will be
-                dry_result = extract_pages(
-                    pdf_path=test_pdf,
-                    page_range="1-2",
+                from opctx_test_helpers import extract_with_context
+                dry_result = extract_with_context(
+                    test_pdf, "1-2",
                     dry_run=True,
-                    conflict_strategy='rename',  # Use rename to avoid any skip logic in dry run
-                    interactive=False
+                    conflicts='rename',  # Use rename to avoid any skip logic in dry run
+                    batch=True
                 )
                 
                 # Parse the expected filename from the dry run output (captured in previous runs)
@@ -331,12 +332,11 @@ class ComprehensiveIntegrationTests:
                 print(f"      Created conflict file: {conflict_file.name}")
                 
                 # Test the strategy
-                result = extract_pages(
-                    pdf_path=test_pdf,
-                    page_range="1-2",
+                result = extract_with_context(
+                    test_pdf, "1-2",
                     dry_run=False,
-                    conflict_strategy=strategy,
-                    interactive=False
+                    conflicts=strategy,
+                    batch=True
                 )
                 
                 # Validate results
@@ -387,6 +387,9 @@ class ComprehensiveIntegrationTests:
             test_pdf = temp_path / "mode_test.pdf"
             create_test_pdf(test_pdf, pages=6)
             
+            from pdf_manipulator.core.operations import extract_pages, extract_pages_separate
+            from opctx_test_helpers import setup_context
+
             test_cases = [
                 # (function, page_range, expected_files, description)
                 (extract_pages, "1-3", 1, "Single file extraction"),
@@ -398,13 +401,10 @@ class ComprehensiveIntegrationTests:
                 print(f"    Testing {description}...")
                 
                 try:
-                    result = func(
-                        pdf_path=test_pdf,
-                        page_range=page_range,
-                        dry_run=False,
-                        conflict_strategy='rename',
-                        interactive=False
-                    )
+                    # OpCtx carries all parameters; the entry points read it
+                    setup_context(page_range, 6, test_pdf,
+                                    dry_run=False, conflicts='rename', batch=True)
+                    result = func()
                     
                     # Validate results
                     if isinstance(result, tuple):
@@ -550,12 +550,11 @@ class ComprehensiveIntegrationTests:
                         
                     path_obj = Path(file_path) if file_path else None
                     
-                    result = extract_pages(
-                        pdf_path=path_obj,
-                        page_range=page_range,
+                    result = extract_with_context(
+                        path_obj, page_range,
                         dry_run=False,
-                        conflict_strategy='rename',
-                        interactive=False
+                        conflicts='rename',
+                        batch=True
                     )
                     
                     # Some errors should be handled gracefully
@@ -589,13 +588,10 @@ class ComprehensiveIntegrationTests:
             start_time = time.time()
             
             # Test separate file extraction with many conflicts
-            result = extract_pages_separate(
-                pdf_path=test_pdf,
-                page_range=f"1-{num_conflicts}",
-                dry_run=False,
-                conflict_strategy='rename',
-                interactive=False
-            )
+            from opctx_test_helpers import setup_context
+            setup_context(f"1-{num_conflicts}", num_conflicts, test_pdf,
+                            dry_run=False, conflicts='rename', batch=True)
+            result = extract_pages_separate()
             
             elapsed = time.time() - start_time
             

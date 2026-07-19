@@ -196,6 +196,17 @@ class PageRangeParser:
         if result:
             return result
         
+        # Unquoted &/| with bad spacing must fail loudly here, not fall
+        # through to a content pattern that silently never matches
+        from pdf_manipulator.core.page_range.boolean import has_malformed_boolean_operators
+        if not arg.lower().startswith('file:') and has_malformed_boolean_operators(arg):
+            raise ValueError(
+                f"Malformed boolean operator in '{arg}': "
+                f"'&' and '|' must have exactly one space on each side "
+                f"(e.g. \"type:text | type:image\"), and quoted text may "
+                f"use them freely (e.g. contains:'A & B')"
+            )
+        
         # If nothing else works, raise error
         raise ValueError(f"Could not parse argument: '{arg}'")
     
@@ -222,18 +233,19 @@ class PageRangeParser:
         if arg.isdigit():
             return True
         
-        # Simple range like "5-10"
-        if re.match(r'^\d+-\d+$', arg):
+        # Simple ranges: "5-10", "3..7", and open-ended "3-" / "-7"
+        if re.match(r'^\d+-\d+$', arg) or re.match(r'^\d+\.\.\d+$', arg):
+            return True
+        if re.match(r'^\d+-$', arg) or re.match(r'^-\d+$', arg):
             return True
         
         # Special keywords that don't need order preservation
         if arg.lower() in ['all', 'odd', 'even']:
             return True
         
-        # First/last patterns
-        if re.match(r'^(first|last)\s+\d+$', arg.lower()):
-            return True
-        
+        # NOTE: first/last patterns are deliberately NOT "simple" here.
+        # In a comma list like "last 2,first 3" the position carries meaning,
+        # so their presence switches on order preservation.
         return False
     
     def _has_arbitrary_numeric_order(self, arguments: list[str]) -> bool:
@@ -323,6 +335,30 @@ class PageRangeParser:
             else:
                 raise ValueError(f"Page number {page_num} out of range (1-{self.total_pages})")
         
+        # Dotdot ranges "3..7" are a documented synonym for "3-7"
+        dotdot_match = re.match(r'^(\d+)\.\.(\d+)$', arg)
+        if dotdot_match:
+            arg = f"{dotdot_match.group(1)}-{dotdot_match.group(2)}"
+        
+        # Open-ended ranges: "3-" (page 3 to end) and "-7" (start to page 7)
+        open_end_match = re.match(r'^(\d+)-$', arg)
+        if open_end_match:
+            start = int(open_end_match.group(1))
+            if not 1 <= start <= self.total_pages:
+                raise ValueError(f"Page number {start} out of range (1-{self.total_pages})")
+            pages = list(range(start, self.total_pages + 1))
+            group = PageGroup(pages, True, arg)
+            return set(pages), f"Pages {start}-{self.total_pages}", [group]
+        
+        open_start_match = re.match(r'^-(\d+)$', arg)
+        if open_start_match:
+            end = int(open_start_match.group(1))
+            if not 1 <= end <= self.total_pages:
+                raise ValueError(f"Page number {end} out of range (1-{self.total_pages})")
+            pages = list(range(1, end + 1))
+            group = PageGroup(pages, True, arg)
+            return set(pages), f"Pages 1-{end}", [group]
+        
         # Range like "5-10" or "10-5" (reverse)
         if re.match(r'^\d+-\d+$', arg):
             try:
@@ -349,15 +385,15 @@ class PageRangeParser:
                     raise e
                 pass
         
-        # First/last patterns
-        first_match = re.match(r'^first\s+(\d+)$', arg.lower())
+        # First/last patterns ("first 3" or the dash synonym "first-3")
+        first_match = re.match(r'^first[\s\-](\d+)$', arg.lower())
         if first_match:
             count = min(int(first_match.group(1)), self.total_pages)
             pages = list(range(1, count + 1))
             group = PageGroup(pages, True, arg)
             return set(pages), f"First {count} pages", [group]
         
-        last_match = re.match(r'^last\s+(\d+)$', arg.lower())
+        last_match = re.match(r'^last[\s\-](\d+)$', arg.lower())
         if last_match:
             count = min(int(last_match.group(1)), self.total_pages)
             start = max(1, self.total_pages - count + 1)
@@ -365,31 +401,55 @@ class PageRangeParser:
             group = PageGroup(pages, True, arg)
             return set(pages), f"Last {count} pages", [group]
         
-        # Slicing patterns like "::2" (every 2nd page)
-        if re.match(r'^::\d+$', arg):
-            step = int(arg[2:])
-            pages = list(range(1, self.total_pages + 1, step))
-            group = PageGroup(pages, False, arg)
-            return set(pages), f"Every {step} pages", [group]
+        # Slicing patterns: start:stop:step with any part omitted, 1-indexed
+        # with an INCLUSIVE stop (page-range semantics, not Python's).
+        #   ::2     every 2nd page from page 1        -> 1, 3, 5, ...
+        #   2::2    every 2nd page starting at page 2 -> 2, 4, 6, ...
+        #   5:10    pages 5 through 10                -> same as 5-10
+        #   5:10:2  every 2nd page from 5 through 10  -> 5, 7, 9
+        #   :10:3   every 3rd page from 1 through 10  -> 1, 4, 7, 10
+        # Digits and colons only, so patterns like "type:text" never match.
+        slice_match = re.match(r'^(\d*):(\d*)(?::(\d*))?$', arg)
+        if slice_match and arg != ':':
+            start_str, stop_str, step_str = slice_match.groups()
+
+            start = int(start_str) if start_str else 1
+            stop = int(stop_str) if stop_str else self.total_pages
+            step = int(step_str) if step_str else 1
+
+            if step < 1:
+                raise ValueError(f"Slice step must be at least 1: '{arg}'")
+            if start < 1:
+                raise ValueError(f"Slice start must be at least 1: '{arg}'")
+            if start > stop:
+                raise ValueError(f"Backwards slice range: '{arg}' (start {start} > stop {stop})")
+
+            stop = min(stop, self.total_pages)
+            if start > self.total_pages:
+                raise ValueError(f"Slice start {start} exceeds document ({self.total_pages} pages)")
+
+            pages = list(range(start, stop + 1, step))
+
+            if step == 1:
+                description = f"Pages {start}-{stop}"
+            else:
+                description = f"Every {step} pages from {start} to {stop}"
+
+            # Consecutive slices behave like ranges; stepped slices are groups
+            group = PageGroup(pages, step == 1, arg)
+            return set(pages), description, [group]
         
         return None
     
     def _looks_like_boolean_expression_no_comma_check(self, arg: str) -> bool:
         """
         Check if argument looks like boolean expression.
-        
-        FIXED: No comma checking - that already happened at top level.
+
+        Delegates to the canonical strict-spacing detector in boolean.py so
+        the parser and the standalone function can never disagree.
         """
-        # Check for boolean operators outside quotes
-        operators = [' & ', ' | ', '!']
-        has_operators = any(op in arg for op in operators)
-        
-        if not has_operators:
-            # Check for parentheses (also indicates boolean)
-            return self._has_unquoted_parentheses(arg)
-        
-        # Has operators - now validate that operators are not all inside quotes
-        return not self._all_operators_are_quoted(arg)
+        from pdf_manipulator.core.page_range.boolean import looks_like_boolean_expression
+        return looks_like_boolean_expression(arg)
     
     def _looks_like_pattern_no_comma_check(self, arg: str) -> bool:
         """

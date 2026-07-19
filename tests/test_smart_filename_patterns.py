@@ -213,7 +213,7 @@ def main():
     print(f"Passed: {passed}/{total}")
     print(f"Success rate: {passed/total*100:.1f}%")
     
-    return 1 if passed == total else 0
+    return 0 if passed == total else 1
 
 
 if __name__ == "__main__":

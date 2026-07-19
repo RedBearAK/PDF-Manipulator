@@ -16,7 +16,7 @@ from rich.console import Console
 # Add the pdf_manipulator to path if running standalone
 sys.path.insert(0, str(Path(__file__).parent))
 
-from pdf_manipulator.core.parser import parse_page_range
+from opctx_test_helpers import parse_with_context
 from pdf_manipulator.core.page_analysis import PageAnalyzer
 from pdf_manipulator.core.page_range.patterns import looks_like_pattern
 
@@ -192,7 +192,7 @@ def debug_boolean_parsing():
     console.print("\n[yellow]🧪 Testing Boolean Expression Parsing[/yellow]")
     
     from pdf_manipulator.core.page_range.boolean import parse_boolean_expression
-    from pdf_manipulator.core.parser import parse_page_range
+    from opctx_test_helpers import parse_with_context
     
     # Create a real test PDF to use
     test_pdf_path = create_test_pdf()
@@ -225,7 +225,7 @@ def debug_boolean_parsing():
             
             try:
                 # Test integration with main parser (this is what users actually call)
-                pages, desc, groups = parse_page_range(test_expr, 3, test_pdf_path)
+                pages, desc, groups = parse_with_context(test_expr, 3, test_pdf_path)
                 console.print(f"    ✓ Result: {len(pages)} pages found")
                 console.print(f"    ✓ Description: '{desc}'")
                 console.print(f"    ✓ Pages: {sorted(list(pages)) if pages else 'none'}")
@@ -276,7 +276,7 @@ def test_case_insensitive_patterns():
         return recognition_success == len(pattern_tests)
     
     try:
-        from pdf_manipulator.core.parser import parse_page_range
+        from opctx_test_helpers import parse_with_context
         
         parsing_tests = [
             # Single case-insensitive patterns
@@ -296,7 +296,7 @@ def test_case_insensitive_patterns():
         parsing_success = 0
         for pattern, description in parsing_tests:
             try:
-                pages, desc, groups = parse_page_range(pattern, 3, test_pdf_path)
+                pages, desc, groups = parse_with_context(pattern, 3, test_pdf_path)
                 console.print(f"  ✓ {description}: '{pattern}' → {len(pages)} pages")
                 parsing_success += 1
             except Exception as e:
@@ -346,7 +346,7 @@ def test_with_real_pdf(pdf_path: Path):
         return recognition_success == len(pattern_tests)
     
     try:
-        from pdf_manipulator.core.parser import parse_page_range
+        from opctx_test_helpers import parse_with_context
         
         parsing_tests = [
             # Single case-insensitive patterns
@@ -366,7 +366,7 @@ def test_with_real_pdf(pdf_path: Path):
         parsing_success = 0
         for pattern, description in parsing_tests:
             try:
-                pages, desc, groups = parse_page_range(pattern, 3, test_pdf_path)
+                pages, desc, groups = parse_with_context(pattern, 3, test_pdf_path)
                 console.print(f"  ✓ {description}: '{pattern}' → {len(pages)} pages")
                 parsing_success += 1
             except Exception as e:
@@ -428,7 +428,7 @@ def test_with_real_pdf(pdf_path: Path):
             
             for pattern in test_patterns:
                 try:
-                    matching_pages, desc, groups = parse_page_range(pattern, total_pages, pdf_path)
+                    matching_pages, desc, groups = parse_with_context(pattern, total_pages, pdf_path)
                     console.print(f"    {pattern:>25}: {len(matching_pages)} pages")
                 except Exception as e:
                     console.print(f"    {pattern:>25}: Error - {e}")

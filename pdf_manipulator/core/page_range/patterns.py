@@ -92,8 +92,14 @@ def looks_like_pattern(range_str: str) -> bool:
 
 
 def looks_like_range_pattern(range_str: str) -> bool:
-    """Check if string looks like a range pattern, respecting quoted strings."""
-    return _contains_unquoted_text(range_str, ' to ')
+    """
+    Check if string looks like a range pattern, respecting quoted strings.
+
+    The ' to ' separator is matched case-insensitively ('TO', 'To', 'tO'),
+    since it must be surrounded by spaces and is unambiguous in any case.
+    Quoted text like contains:'A to B' never triggers detection.
+    """
+    return _contains_unquoted_text(range_str, ' to ', case_sensitive=False)
 
 
 def parse_pattern_expression(expression: str, pdf_path: Path, total_pages: int) -> list[int]:
@@ -118,12 +124,12 @@ def parse_range_pattern_with_groups(expression: str, pdf_path: Path, total_pages
     
     Finds ALL matching A...B sections, not just first A to last B.
     """
-    # Extract start and end patterns
-    if ' to ' not in expression:
+    # Extract start and end patterns (' to ' separator, any case)
+    if ' to ' not in expression.lower():
         raise ValueError(f"Range pattern must contain ' to ': {expression}")
     
-    # Split on ' to ' while respecting quotes
-    parts = _split_on_unquoted_text(expression, ' to ')
+    # Split on ' to ' while respecting quotes, case-insensitively
+    parts = _split_on_unquoted_text(expression, ' to ', case_sensitive=False)
     if len(parts) != 2:
         raise ValueError(f"Range pattern must have exactly one ' to ' separator: {expression}")
     
@@ -255,10 +261,14 @@ def _is_valid_pattern_value(value_part: str) -> bool:
     return bool(value_part)
 
 
-def _contains_unquoted_text(text: str, search_text: str) -> bool:
+def _contains_unquoted_text(text: str, search_text: str, case_sensitive: bool = True) -> bool:
     """Check if text contains search_text outside of quoted strings."""
-    if search_text not in text:
+    haystack = text if case_sensitive else text.lower()
+    needle = search_text if case_sensitive else search_text.lower()
+    if needle not in haystack:
         return False
+    text = haystack  # Compare against the normalized form below
+    search_text = needle
     
     in_quote = False
     quote_char = None
@@ -287,9 +297,17 @@ def _contains_unquoted_text(text: str, search_text: str) -> bool:
     return False
 
 
-def _split_on_unquoted_text(text: str, separator: str) -> list[str]:
-    """Split text on separator, but only when separator is outside quotes."""
-    if separator not in text:
+def _split_on_unquoted_text(text: str, separator: str, case_sensitive: bool = True) -> list[str]:
+    """
+    Split text on separator, but only when separator is outside quotes.
+
+    With case_sensitive=False the separator matches in any case while the
+    returned parts keep the original text untouched (only the separator
+    match itself is case-folded).
+    """
+    compare_text = text if case_sensitive else text.lower()
+    compare_sep = separator if case_sensitive else separator.lower()
+    if compare_sep not in compare_text:
         return [text]
     
     parts = []
@@ -316,11 +334,11 @@ def _split_on_unquoted_text(text: str, separator: str) -> list[str]:
             in_quote = False
             quote_char = None
             current_part += char
-        elif not in_quote and text[i:i+len(separator)] == separator:
+        elif not in_quote and compare_text[i:i+len(compare_sep)] == compare_sep:
             # Found unquoted separator - split here
             parts.append(current_part)
             current_part = ""
-            i += len(separator) - 1  # Skip separator (will be incremented at end of loop)
+            i += len(compare_sep) - 1  # Skip separator (will be incremented at end of loop)
         else:
             current_part += char
         
@@ -400,15 +418,33 @@ def _evaluate_pattern(expression: str, pdf_path: Path, total_pages: int) -> list
     
     matching_pages = []
     
-    # For type: and size: patterns, we still need the pypdf page objects
-    if pattern_type in ['type', 'size']:
+    # For type: and size: patterns, delegate to PageAnalyzer, validating the
+    # value FIRST so "type:invalid" or "size:badformat" fail loudly instead of
+    # silently matching nothing (or everything)
+    if pattern_type == 'type':
+        valid_types = ('text', 'image', 'mixed', 'empty')
+        if value.lower() not in valid_types:
+            raise ValueError(
+                f"Invalid page type '{value}': must be one of {', '.join(valid_types)}"
+            )
         try:
-            with suppress_pdf_warnings():
-                reader = PdfReader(pdf_path)
-                for page_num in range(1, min(total_pages + 1, len(reader.pages) + 1)):
-                    page = reader.pages[page_num - 1]
-                    if _page_matches_structural_pattern(page, pattern_type, value, is_case_insensitive):
-                        matching_pages.append(page_num)
+            with PageAnalyzer(pdf_path) as analyzer:
+                matching_pages = analyzer.get_pages_by_type(value.lower())
+        except ValueError:
+            raise
+        except Exception as e:
+            raise ValueError(f"Error processing PDF: {e}")
+    elif pattern_type == 'size':
+        if not re.match(r'^(<=|>=|<|>|=)\d+(?:\.\d+)?\s*(B|KB|MB|GB)?$', value.strip(), re.IGNORECASE):
+            raise ValueError(
+                f"Invalid size condition '{value}': expected forms like "
+                f"'<500KB', '>1MB', '>=2MB', '<=100KB'"
+            )
+        try:
+            with PageAnalyzer(pdf_path) as analyzer:
+                matching_pages = analyzer.get_pages_by_size(value.strip())
+        except ValueError:
+            raise
         except Exception as e:
             raise ValueError(f"Error processing PDF: {e}")
     else:
@@ -456,38 +492,6 @@ def _text_matches_pattern(text: str, pattern_type: str, value: str, case_insensi
         
         else:
             raise ValueError(f"Unknown text pattern type: {pattern_type}")
-            
-    except Exception:
-        return False
-
-
-def _page_matches_structural_pattern(page, pattern_type: str, value: str, case_insensitive: bool) -> bool:
-    """
-    Check if a page matches structural patterns (type, size).
-    
-    These patterns need access to the pypdf page object for structural analysis,
-    not just extracted text.
-    """
-    try:
-        if pattern_type == 'type':
-            # Simplified type detection - should use PageAnalyzer
-            if value.lower() == 'text':
-                text = page.extract_text()
-                if text:
-                    text = text.strip()
-                return text and len(text) > 50  # Simple heuristic
-            elif value.lower() == 'image':
-                # Check for images - simplified
-                return '/XObject' in str(page.get('/Resources', {}))
-            else:
-                return False
-        
-        elif pattern_type == 'size':
-            # Simplified size detection - should be more sophisticated
-            return True  # Placeholder
-        
-        else:
-            raise ValueError(f"Unknown structural pattern type: {pattern_type}")
             
     except Exception:
         return False

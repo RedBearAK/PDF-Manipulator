@@ -26,7 +26,14 @@ def parse_page_range(*args, **kwargs):
     """
     Parse page range using OpCtx - parameters ignored for backward compatibility.
 
-    Parse page range string and return set of page numbers (1-indexed), description, and groupings.
+    All inputs come from OperationContext: OpCtx.get_page_range_arg() for the
+    range string, current_pdf_path/current_page_count for the document, and
+    args.filter_matches/group_start/group_end for advanced features. Set up
+    the context first (the CLI does this; tests use opctx_test_helpers).
+    Results are cached in OpCtx per PDF; set_current_pdf clears the cache.
+
+    Returns set of page numbers (1-indexed), description, and groupings.
+    The syntax documentation below describes the range string itself.
 
     Enhanced version that supports advanced filtering and boundary detection:
     

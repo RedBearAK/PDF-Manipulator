@@ -16,9 +16,10 @@ from unittest.mock import patch, MagicMock
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
+sys.path.insert(0, str(project_root / "tests"))
 
 from pdf_manipulator.cli import extract_enhanced_args
-from pdf_manipulator.core.operations import extract_pages
+from opctx_test_helpers import extract_with_context
 from pdf_manipulator.core.file_conflicts import resolve_file_conflicts
 from pdf_manipulator.core.exceptions import FileConflictError
 
@@ -134,11 +135,10 @@ def test_operations_parameter_acceptance():
         
         try:
             # Test extract_pages accepts conflict_strategy parameter
-            result = extract_pages(
-                pdf_path=test_pdf,
-                page_range="1",
+            result = extract_with_context(
+                test_pdf, "1",
                 dry_run=True,  # Don't actually create files
-                conflict_strategy='ask'
+                conflicts='ask'
             )
             
             # In dry_run mode, extract_pages returns (None, 0)
@@ -246,7 +246,9 @@ def test_end_to_end_integration():
         create_test_pdf(test_pdf)
         
         # Create expected output file to test conflict (match actual filename generation)
-        expected_output = temp_path / "source_extracted_page1.pdf"
+        # Current naming format: {stem}_extracted_{sanitized description}.pdf
+        # where "Page 1" sanitizes to "Page_1"
+        expected_output = temp_path / "source_extracted_Page_1.pdf"
         expected_output.write_text("existing output")
         
         test_cases = [
@@ -270,11 +272,10 @@ def test_end_to_end_integration():
                 # Call extract_pages with arguments processed through the full chain
                 enhanced_args = extract_enhanced_args(args)
                 
-                result = extract_pages(
-                    pdf_path=test_pdf,
-                    page_range=args.extract_pages,
+                result = extract_with_context(
+                    test_pdf, args.extract_pages,
                     dry_run=False,  # Actually perform operation
-                    conflict_strategy=enhanced_args['conflict_strategy']
+                    conflicts=enhanced_args['conflict_strategy']
                 )
                 
                 if expected_behavior == 'skip':

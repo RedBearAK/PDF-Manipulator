@@ -1,6 +1,6 @@
 """
 Command line interface for Simple PDF Scraper.
-File: simple_pdf_scraper/cli.py
+File: pdf_manipulator/scraper/cli.py
 """
 
 import os
@@ -11,9 +11,9 @@ import warnings
 
 from pathlib import Path
 
-from simple_pdf_scraper.output.tsv_writer import TSVWriter
-from simple_pdf_scraper.processors.pypdf_processor import PyPDFProcessor
-from simple_pdf_scraper.extractors.pattern_extractor import PatternExtractor
+from pdf_manipulator.scraper.output.tsv_writer import TSVWriter
+from pdf_manipulator.scraper.processors.pypdf_processor import PyPDFProcessor
+from pdf_manipulator.scraper.extractors.pattern_extractor import PatternExtractor
 
 
 def parse_pattern(pattern_str):
@@ -150,19 +150,19 @@ def create_argument_parser():
         epilog="""
 Examples:
   # Dump raw text to console (debugging)
-  python -m simple_pdf_scraper --dump-text document.pdf
+  pdf-manipulator --dump-text document.pdf
   
   # Dump text to file
-  python -m simple_pdf_scraper --dump-text document.pdf -o extracted_text.txt
+  pdf-manipulator --dump-text document.pdf -o extracted_text.txt
   
   # Extract invoice number (word immediately right of "Invoice #")
-  python -m simple_pdf_scraper invoice.pdf --pattern "Invoice #:right:0:word"
+  pdf-manipulator invoice.pdf --pattern "Invoice #:right:0:word"
   
   # Extract company name (line above "Invoice #") 
-  python -m simple_pdf_scraper invoice.pdf --pattern "Invoice #:above:1:line"
+  pdf-manipulator invoice.pdf --pattern "Invoice #:above:1:line"
   
   # Multiple patterns from file
-  python -m simple_pdf_scraper *.pdf --patterns-file patterns.txt -o results.tsv
+  pdf-manipulator *.pdf --patterns-file patterns.txt -o results.tsv
 
 Pattern format: keyword:direction:distance:extract_type
   keyword:       Text to search for (case-insensitive)

@@ -1,6 +1,6 @@
 """
 PyPDF processor implementation with improved error handling.
-File: simple_pdf_scraper/processors/pypdf_processor.py
+File: pdf_manipulator/scraper/processors/pypdf_processor.py
 """
 
 import io
@@ -12,7 +12,7 @@ from contextlib import redirect_stderr
 
 import pypdf
 
-from simple_pdf_scraper.processors.base import PDFProcessor
+from pdf_manipulator.scraper.processors.base import PDFProcessor
 
 
 class PyPDFProcessor(PDFProcessor):

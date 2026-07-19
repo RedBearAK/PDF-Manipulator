@@ -28,20 +28,124 @@ console = Console()
 
 def looks_like_boolean_expression(range_str: str) -> bool:
     """
-    Check if string looks like a boolean expression.
-    
-    FIXED: No comma detection - that happens at parser level now.
+    Check if string looks like a well-formed boolean expression.
+
+    Strict operator spacing: unquoted '&' and '|' count as boolean operators
+    only in canonical form -- exactly one space on each side (' & ', ' | ').
+    If ANY unquoted '&'/'|' is malformed (missing space, extra spaces, at the
+    start or end of the expression), the whole string is NOT a boolean
+    expression; the parser then rejects it with a clear error instead of
+    half-interpreting it. This strictness protects pattern text and keeps
+    behavior predictable.
+
+    With no '&'/'|' present, an unquoted '!' (negation) or unquoted
+    parentheses still indicate a boolean expression.
     """
-    # Check for boolean operators outside quotes
-    operators = [' & ', ' | ', '!']
-    has_operators = any(op in range_str for op in operators)
-    
-    if not has_operators:
-        # Check for parentheses (also indicates boolean)
-        return _has_unquoted_parentheses(range_str)
-    
-    # Has operators - now validate that operators are not all inside quotes
-    return not _all_operators_are_quoted(range_str)
+    amp_pipe_positions = _find_unquoted_operator_positions(range_str)
+
+    if amp_pipe_positions:
+        return all(_operator_spacing_is_canonical(range_str, pos)
+                    for pos in amp_pipe_positions)
+
+    if _has_unquoted_negation(range_str):
+        return True
+
+    return _has_unquoted_parentheses(range_str)
+
+
+def has_malformed_boolean_operators(range_str: str) -> bool:
+    """
+    Check for unquoted '&' or '|' with non-canonical spacing.
+
+    Used by the parser to reject expressions like "type:text |" or
+    "all& !type:empty" with a clear error rather than silently treating
+    them as (never-matching) content patterns.
+    """
+    amp_pipe_positions = _find_unquoted_operator_positions(range_str)
+    if not amp_pipe_positions:
+        return False
+
+    return not all(_operator_spacing_is_canonical(range_str, pos)
+                    for pos in amp_pipe_positions)
+
+
+def _find_unquoted_operator_positions(text: str) -> list[int]:
+    """Return positions of every unquoted '&' or '|' character."""
+    positions = []
+    in_quote = False
+    quote_char = None
+    i = 0
+
+    while i < len(text):
+        char = text[i]
+
+        # Handle escapes
+        if char == '\\' and i + 1 < len(text):
+            i += 2
+            continue
+
+        if char in ['"', "'"] and not in_quote:
+            in_quote = True
+            quote_char = char
+        elif char == quote_char and in_quote:
+            in_quote = False
+            quote_char = None
+        elif not in_quote and char in ('&', '|'):
+            positions.append(i)
+
+        i += 1
+
+    return positions
+
+
+def _operator_spacing_is_canonical(text: str, pos: int) -> bool:
+    """
+    Check that the operator at pos has exactly one space on each side.
+
+    "a & b" is canonical; "a& b", "a &b", "a&b", "a  &  b", leading or
+    trailing operators are not.
+    """
+    # Exactly one space before: previous char is a space, the one before
+    # that (if any) is not, and the operator is not the first character
+    if pos < 1 or text[pos - 1] != ' ':
+        return False
+    if pos >= 2 and text[pos - 2] == ' ':
+        return False
+
+    # Exactly one space after, and the operator is not the last character
+    if pos + 1 >= len(text) or text[pos + 1] != ' ':
+        return False
+    if pos + 2 < len(text) and text[pos + 2] == ' ':
+        return False
+
+    return True
+
+
+def _has_unquoted_negation(text: str) -> bool:
+    """Check for an unquoted '!' character (negation)."""
+    in_quote = False
+    quote_char = None
+    i = 0
+
+    while i < len(text):
+        char = text[i]
+
+        if char == '\\' and i + 1 < len(text):
+            i += 2
+            continue
+
+        if char in ['"', "'"] and not in_quote:
+            in_quote = True
+            quote_char = char
+        elif char == quote_char and in_quote:
+            in_quote = False
+            quote_char = None
+        elif not in_quote and char == '!':
+            return True
+
+        i += 1
+
+    return False
 
 
 def evaluate_boolean_expression_with_groups(expression: str, pdf_path: Path, 
@@ -180,6 +284,15 @@ class UnifiedBooleanSupervisor:
         Returns:
             Tuple of (all_pages, page_groups) where groups preserve structure
         """
+        # Malformed operators (missing operands, bad spacing) fail loudly
+        # here rather than being half-interpreted as content patterns
+        if has_malformed_boolean_operators(expression):
+            raise ValueError(
+                f"Malformed boolean expression '{expression}': "
+                f"'&' and '|' need an operand on each side, separated by "
+                f"exactly one space (e.g. \"type:text | type:image\")"
+            )
+
         # Check if this is a boolean expression at all
         if not looks_like_boolean_expression(expression):
             # Not a boolean expression - delegate to simple pattern parsing
@@ -458,13 +571,59 @@ class UnifiedBooleanSupervisor:
         return tokens
     
     def _evaluate_single_pattern(self, pattern: str) -> list[int]:
-        """Evaluate a single pattern and return matching page numbers."""
+        """
+        Evaluate a single operand and return matching page numbers.
+
+        Handles the special keywords (all/odd/even) that are valid operands
+        in boolean expressions like "all & !type:empty" before falling
+        through to content pattern evaluation.
+        """
         from pdf_manipulator.core.page_range.patterns import parse_pattern_expression
-        
+
+        keyword = pattern.lower().strip()
+        if keyword == 'all':
+            return list(range(1, self.total_pages + 1))
+        if keyword == 'odd':
+            return list(range(1, self.total_pages + 1, 2))
+        if keyword == 'even':
+            return list(range(2, self.total_pages + 1, 2))
+
+        # Numeric operands: pages, ranges, slices, first/last are all valid
+        # in boolean expressions, e.g. "5:15:2 & contains:'KODIAK'" to search
+        # only within a page window
+        numeric_pages = self._try_numeric_operand(pattern)
+        if numeric_pages is not None:
+            return numeric_pages
+
         try:
             return parse_pattern_expression(pattern, self.pdf_path, self.total_pages)
         except Exception as e:
             raise ValueError(f"Failed to evaluate pattern '{pattern}': {e}")
+
+    def _try_numeric_operand(self, operand: str):
+        """
+        Evaluate a numeric operand ("7", "3-5", "5:15:2", "first-3", ...).
+
+        Returns:
+            Sorted list of page numbers, or None when the operand is not a
+            numeric specification (content patterns fall through). Genuine
+            numeric errors (out of range, backwards slice) propagate so the
+            user sees them instead of a silent empty result.
+        """
+        from pdf_manipulator.core.page_range.page_range_parser import PageRangeParser
+
+        operand = operand.strip()
+        if not operand or not (operand[0].isdigit() or operand[0] in ':-'
+                                or operand.lower().startswith(('first', 'last'))):
+            return None
+
+        numeric_parser = PageRangeParser(total_pages=self.total_pages)
+        result = numeric_parser._try_numeric_range(operand)
+        if result is None:
+            return None
+
+        pages, _, _ = result
+        return sorted(pages)
     
     def _evaluate_simple_expression(self, expression: str) -> list[int]:
         """Evaluate a simple (non-boolean) expression."""

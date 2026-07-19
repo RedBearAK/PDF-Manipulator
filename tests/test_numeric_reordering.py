@@ -46,7 +46,10 @@ def test_basic_reordering() -> bool:
             # Create fresh parser for each test to avoid state accumulation
             parser = PageRangeParser(total_pages=50)
             pages_set, desc, groups = parser.parse(input_range)
-            actual_order = get_ordered_pages_from_groups(groups, pages_set)
+            # dedup='none': this module tests ORDERING; the default 'strict'
+            # strategy would (correctly) remove the explicit duplicate in
+            # '3,1,4,1', which deduplication tests cover separately
+            actual_order = get_ordered_pages_from_groups(groups, pages_set, 'none')
             
             if actual_order == expected_order:
                 print(f"✓ {description}: '{input_range}' → {actual_order}")
@@ -162,8 +165,9 @@ def test_comma_detection() -> bool:
         ("first 3,last 2,10", True, "Special keywords with numbers"),
         ("::2,5-10", True, "Slicing with ranges"),
         
-        # Should NOT preserve order (for now - until smart selector chaining is implemented)
-        ("contains:'Chapter',type:text", False, "Smart selectors (not yet implemented)"),
+        # Smart selectors preserve comma order (chaining is implemented now,
+        # and pattern position carries meaning: groups appear in pattern order)
+        ("contains:'Chapter',type:text", True, "Smart selectors preserve order"),
         ("5", False, "Single item (no comma)"),
         ("5-10", False, "Single range (no comma)"),
     ]
@@ -173,7 +177,8 @@ def test_comma_detection() -> bool:
     
     for input_range, should_preserve, description in test_cases:
         try:
-            detected = parser._should_preserve_comma_order(input_range)
+            arguments = [part.strip() for part in input_range.split(',')]
+            detected = parser._should_preserve_order(arguments)
             
             if detected == should_preserve:
                 status = "preserve order" if detected else "standard processing"
@@ -220,7 +225,10 @@ def test_reverse_ranges() -> bool:
             # Create fresh parser for each test
             parser = PageRangeParser(total_pages=50)
             pages_set, desc, groups = parser.parse(input_range)
-            actual_order = get_ordered_pages_from_groups(groups, pages_set)
+            # dedup='none': this module tests ORDERING; the default 'strict'
+            # strategy would (correctly) remove the explicit duplicate in
+            # '3,1,4,1', which deduplication tests cover separately
+            actual_order = get_ordered_pages_from_groups(groups, pages_set, 'none')
             
             if actual_order == expected_order:
                 print(f"✓ {description}: '{input_range}' → {actual_order}")

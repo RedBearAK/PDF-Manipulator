@@ -232,6 +232,35 @@ def test_simple_boolean_parsing():
     return passed == total
 
 
+def test_numeric_operands() -> bool:
+    """Numeric specs are valid boolean operands (page-window intersections)."""
+    print("=== Testing Numeric Boolean Operands ===")
+
+    test_cases = [
+        ("3-5 | 8-9", [3, 4, 5, 8, 9], "Range union"),
+        ("::2 & 1-6", [1, 3, 5], "Slice intersected with range"),
+        ("first-3 | last-2", [1, 2, 3, 9, 10], "First/last union"),
+        ("all & !4-7", [1, 2, 3, 8, 9, 10], "Numeric negation"),
+    ]
+
+    passed = 0
+    total = len(test_cases)
+
+    for range_str, expected, description in test_cases:
+        try:
+            pages = parse_boolean_expression(range_str, MOCK_PDF_PATH, 10)
+            if sorted(pages) == expected:
+                print(f"✓ {description}: '{range_str}' → {sorted(pages)}")
+                passed += 1
+            else:
+                print(f"✗ {description}: '{range_str}' → {sorted(pages)}, expected {expected}")
+        except Exception as e:
+            print(f"✗ {description}: '{range_str}' → Exception: {e}")
+
+    print(f"Numeric operands: {passed}/{total} passed\n")
+    return passed == total
+
+
 def test_precedence_and_errors():
     """Test operator precedence and error handling."""
     print("=== Testing Precedence and Error Cases ===")
@@ -280,6 +309,7 @@ def main():
         test_parentheses_detection,
         test_quote_awareness,
         test_simple_boolean_parsing,
+        test_numeric_operands,
         test_precedence_and_errors,
     ]
     

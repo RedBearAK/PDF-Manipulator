@@ -63,23 +63,30 @@ def get_ordered_pages_from_groups(groups: list, fallback_pages: set = None,
     else:
         processed_groups = groups
     
+    non_empty_groups = [group for group in processed_groups
+                        if hasattr(group, 'pages') and group.pages]
+
+    # When NOTHING asks for order preservation (no ranges, no preserve_order
+    # flags), the user didn't specify an order: return globally sorted pages.
+    # Otherwise honor structure group by group.
+    def _keeps_own_order(group) -> bool:
+        return (hasattr(group, 'is_range') and group.is_range) or \
+            getattr(group, 'preserve_order', False)
+
+    if not any(_keeps_own_order(group) for group in non_empty_groups):
+        all_pages = []
+        for group in non_empty_groups:
+            all_pages.extend(group.pages)
+        return sorted(all_pages)
+
     ordered_pages = []
-    has_preserve_order = processed_groups and hasattr(processed_groups[0], 'preserve_order')
-    
-    for group in processed_groups:
-        # Skip empty groups (this was the critical Alaska cities fix)
-        if not hasattr(group, 'pages') or not group.pages:
-            continue
-            
-        # For ranges, always preserve the order as specified in the pages list
-        # For comma-separated preserve_order groups, also preserve order
-        # For other groups, sort for backward compatibility
-        if (hasattr(group, 'is_range') and group.is_range) or \
-            (has_preserve_order and getattr(group, 'preserve_order', False)):
+    for group in non_empty_groups:
+        # (Skipping empty groups above was the critical Alaska cities fix)
+        if _keeps_own_order(group):
             # Preserve the exact order from this group (ranges or preserve_order=True)
             ordered_pages.extend(group.pages)
         else:
-            # Use sorted order for this group (backward compatibility)
+            # Use sorted order within this group (backward compatibility)
             ordered_pages.extend(sorted(group.pages))
     
     return ordered_pages
@@ -93,20 +100,24 @@ def get_ordered_pages_from_groups(groups: list, fallback_pages: set = None,
 def extract_pages(*args, **kwargs) -> tuple[Path, float]:
     """
     Extract specified pages with order preservation and enhanced deduplication.
-    
-    Args:
-        pdf_path: Source PDF file
-        page_range: Pages to extract with advanced syntax support
-        patterns: List of enhanced pattern strings for content extraction
-        template: Filename template for smart naming
-        source_page: Fallback page for pattern extraction (overridden by pg specs)
-        dry_run: Whether to perform actual extraction
-        dedup_strategy: Deduplication strategy to apply
-        use_timestamp: Whether to include timestamp in filenames
-        custom_prefix: Custom prefix for output filenames
-        conflict_strategy: How to handle existing files ('ask', 'overwrite', 'skip', 'rename', 'fail')
-        interactive: Whether to allow interactive prompts (inferred from conflict_strategy if None)
-        
+
+    All parameters come from OperationContext (OpCtx); the *args/**kwargs
+    are accepted for backward call-shape compatibility and discarded. Set up
+    the context first (the CLI does this; tests use opctx_test_helpers):
+
+        OpCtx.set_args(namespace)               # extract_pages, conflicts,
+                                                # dedup, patterns, template,
+                                                # dry_run, batch, timestamps
+        OpCtx.set_current_pdf(path, page_count)
+
+    Relevant OpCtx state: current_pdf_path, get_page_range_arg(), patterns,
+    template, source_page, dry_run, dedup_strategy, use_timestamp,
+    custom_prefix, conflict_strategy, interactive.
+
+    Smart naming: when both patterns and a template are set, the output
+    filename is generated from extracted content via FilenameGenerator;
+    otherwise simple extraction naming is used.
+
     Returns:
         Tuple of (output_path, file_size) or (None, 0) if dry run or error
     """
@@ -217,7 +228,13 @@ def extract_pages(*args, **kwargs) -> tuple[Path, float]:
 def extract_pages_grouped(*args, **kwargs) -> list[tuple[Path, float]]:
     """
     Extract pages respecting original groupings with order preservation and deduplication.
-    FIXED: Handle list/PageGroup object inconsistencies properly.
+
+    All parameters come from OperationContext (OpCtx); *args/**kwargs are
+    accepted for backward call-shape compatibility and discarded. See
+    extract_pages() for the full OpCtx setup contract.
+
+    Returns:
+        List of (output_path, file_size) tuples, one per group
     """
     
     # Discard incoming parameters - use OpCtx instead
@@ -365,22 +382,13 @@ def extract_pages_grouped(*args, **kwargs) -> list[tuple[Path, float]]:
 def extract_pages_separate(*args, **kwargs) -> list[tuple[Path, float]]:
     """
     Extract each page as a separate file with order preservation and deduplication.
-    
-    Args:
-        pdf_path: Source PDF file
-        page_range: Pages to extract with advanced syntax support
-        patterns: List of enhanced pattern strings for content extraction
-        template: Filename template for smart naming
-        source_page: Fallback page for pattern extraction (overridden by pg specs)
-        dry_run: Whether to perform actual extraction
-        dedup_strategy: Deduplication strategy to apply
-        use_timestamp: Whether to include timestamp in filenames
-        custom_prefix: Custom prefix for output filenames
-        conflict_strategy: How to handle existing files ('ask', 'overwrite', 'skip', 'rename', 'fail')
-        interactive: Whether to allow interactive prompts (inferred from conflict_strategy if None)
-        
+
+    All parameters come from OperationContext (OpCtx); *args/**kwargs are
+    accepted for backward call-shape compatibility and discarded. See
+    extract_pages() for the full OpCtx setup contract.
+
     Returns:
-        List of (output_path, file_size) tuples for each created page file
+        List of (output_path, file_size) tuples, one per extracted page
     """
     # Discard incoming parameters - use OpCtx instead
     args = None
