@@ -100,27 +100,38 @@ def decide_extraction_mode(pages_to_extract: set[int], groups: list[PageGroup], 
     #     else:
     #         console.print(f"  Single: page {group.pages[0]}")
 
+    # Labels are padded to a common width so the spec text starts in the same
+    # column on every line ("Single:" is the longest label at 7 characters).
+    label_width = 8
+
     for group in groups:
         if not group.pages:  # Handle empty groups
-            console.print(f"  Empty: {group.original_spec} (no matches)")
+            console.print(f"  {'Empty:':<{label_width}}{group.original_spec} (no matches)")
             continue
-            
+
         if len(group.pages) == 1:
-            console.print(f"  Single: page {group.pages[0]}")
+            # Show the originating spec (e.g. the regex pattern) just like the
+            # Range/Group lines do -- unless the spec IS the page number, where
+            # repeating it ("Single: 71 -> page 71") would be noise.
+            page_num = group.pages[0]
+            spec = getattr(group, 'original_spec', '') or ''
+            if spec.strip() and spec.strip() != str(page_num):
+                console.print(f"  {'Single:':<{label_width}}{spec} → page {page_num}")
+            else:
+                console.print(f"  {'Single:':<{label_width}}page {page_num}")
         else:
+            sorted_pages = sorted(group.pages)
             if group.is_range and len(group.pages) > 1:
                 # Check if it's a consecutive range
-                sorted_pages = sorted(group.pages)
-                is_consecutive = all(sorted_pages[i] == sorted_pages[i-1] + 1 
+                is_consecutive = all(sorted_pages[i] == sorted_pages[i-1] + 1
                                     for i in range(1, len(sorted_pages)))
-                
+
                 if is_consecutive:
-                    console.print(f"  Range: {group.original_spec} → pages {sorted_pages[0]}-{sorted_pages[-1]}")
+                    console.print(f"  {'Range:':<{label_width}}{group.original_spec} → pages {sorted_pages[0]}-{sorted_pages[-1]}")
                 else:
-                    console.print(f"  Group: {group.original_spec} → {len(group.pages)} pages {sorted_pages}")
+                    console.print(f"  {'Group:':<{label_width}}{group.original_spec} → {len(group.pages)} pages {sorted_pages}")
             else:
-                sorted_pages = sorted(group.pages)
-                console.print(f"  Group: {group.original_spec} → {len(group.pages)} pages {sorted_pages}")
+                console.print(f"  {'Group:':<{label_width}}{group.original_spec} → {len(group.pages)} pages {sorted_pages}")
     
 
 
