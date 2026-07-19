@@ -7,6 +7,10 @@
 
 PDF Manipulator is a powerful command-line tool that goes beyond simple page extraction. It understands PDF content, allowing you to extract pages by type, size, text content, or complex boolean expressions. Perfect for processing documents, reports, and scanned materials with precision.
 
+> **New to the tool?** Start with the [step-by-step tutorial](docs/TUTORIAL.md) —
+> it walks from first extraction through content-driven batch workflows,
+> with a navigable table of contents.
+
 ## 🚀 Key Features
 
 - **Content-Aware Selection**: Extract pages by type (text/image/mixed), size, or text content
